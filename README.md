@@ -36,16 +36,17 @@ The WACCM-X archive publishes ready-made monthly zonal `_zm.nc` files; JuMACS us
 From the repository and HPC project root `/p/data1/slmet/model_data/jumacs`:
 
 ```bash
-module load Stages/2026 GCCcore/14.3.0 SciPy-Stack/2025b netcdf4-python/1.7.2 BeautifulSoup/4.14.2 PyYAML/6.0.2
-export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-python3 -m pytest -q
-python3 -m jumacs.cli inspect --model GEOSCCM
-python3 -m jumacs.cli inspect --model EMAC
-python3 -m jumacs.cli inspect --model WACCM-X
-python3 -m jumacs.cli download --model WACCM-X --start-year 1985 --end-year 2014  # size plan only
+source scripts/python_setup.sh
+python -m pytest -q
+jumacs inspect --model GEOSCCM
+jumacs inspect --model EMAC
+jumacs inspect --model WACCM-X
+jumacs download --model WACCM-X --start-year 1985 --end-year 2014  # size plan only
 ```
 
-The installed command is `jumacs` (`pip install -e .`); `python3 -m jumacs.cli` works with the modules and `PYTHONPATH`. `--model` accepts any registered model name or `all`. The `download` command is plan-only: it prints and saves a size estimate without transfer.
+`scripts/python_setup.sh` loads the Python module, creates/activates `.venv` and installs JuMACS with the test extra; re-run it with `source scripts/python_setup.sh --update` to refresh pip, JuMACS and dependencies.
+
+The installed command is `jumacs` (editable install from the setup script); `python3 -m jumacs.cli` also works with manually loaded modules and `PYTHONPATH="$PWD/src"`. `--model` accepts any registered model name or `all`. The `download` command is plan-only: it prints and saves a size estimate without transfer.
 
 Transfers need general Internet access, which JUWELS **compute nodes do not have**; there is therefore no download wrapper in `scripts/slurm/`. Execute a reviewed plan only where Internet egress works: on **JUDAC** (`python3 scripts/judac_download.py --model MODEL --execute`, auto-discovers manifests in `products/manifests/`; preferred for bulk transfer) or on a **JUWELS login node** (`jumacs download --model MODEL --execute` or `make download-execute MODEL=...`). Login-node transfers are for small selections only; keep bulk work on JUDAC and mount the shared tree over SSHFS (`~/jumount`) when copying from JUDAC. Heavy processing still runs through Slurm, not on the login node, and Slurm jobs must not fetch data at run time:
 
