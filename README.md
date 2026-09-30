@@ -66,11 +66,16 @@ The compact file is a straightforward month/height/latitude input for a JuMACS-a
 
 `make site` rebuilds `site/index.html` from existing plot catalogs without redrawing the plots. Internal browser links are relative. By default the browser does not link to NetCDF products because `site/` must also work when mirrored by itself. Set `JUMACS_PRODUCT_URL_BASE` during site generation only if those selected compact files are published at that URL.
 
-The mirror commands are separate from the scientific workflow and require a non-empty destination:
+Run the local mirror **from the notebook Git clone**. It reads the mounted HPC tree at `~/jumount/data/slmet/model_data/jumacs` by default and writes the static browser to the clone's ignored `site/` directory. It also copies exactly five finished 1985–2014 NetCDF products to the clone's ignored `products/climatology/`: the grouped GEOSCCM, EMAC and WACCM-X climatologies and the two compact extensions. Per-variable files and the full monthly zonal series are excluded. The site is an exact mirror; NetCDF files are copied incrementally without deletion.
 
 ```bash
-export JUMACS_LOCAL_SITE_MIRROR=/path/to/local/site
+cd ~/wrk/clim/jumacs
 make mirror-local
+```
+
+Set `JUMACS_HPC_ROOT` if the HPC tree is mounted elsewhere. The web and publication commands still require explicit destinations:
+
+```bash
 export JUMACS_WEB_SITE_MIRROR=user@web:/path/to/site
 make mirror-web
 export JUMACS_WEB_DATA_MIRROR=user@web:/path/to/data

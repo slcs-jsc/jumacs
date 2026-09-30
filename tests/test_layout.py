@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -43,8 +44,54 @@ def test_site_build_has_only_relative_default_links(tmp_path, monkeypatch):
 
 def test_mirror_rejects_unset_destination():
     env = os.environ.copy()
-    for key in ("JUMACS_LOCAL_SITE_MIRROR", "JUMACS_WEB_SITE_MIRROR", "JUMACS_WEB_DATA_MIRROR"):
+    for key in ("JUMACS_WEB_SITE_MIRROR", "JUMACS_WEB_DATA_MIRROR"):
         env.pop(key, None)
-    for mode in ("local", "web", "data"):
+    for mode in ("web", "data"):
         result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), mode], env=env, capture_output=True, text=True)
         assert result.returncode == 2 and "unset or empty" in result.stderr
+
+
+def test_local_mirror_reads_hpc_tree_and_selects_only_five_products(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / ".git").mkdir()
+    shutil.copy2(ROOT / "scripts/mirror.sh", checkout / "scripts/mirror.sh")
+    hpc = tmp_path / "hpc"
+    (hpc / "site").mkdir(parents=True)
+    (hpc / "site/index.html").write_text("site")
+    selected = (
+        "GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc",
+        "EMAC/jumacs_emac_refd1_climatology_1985-2014.nc",
+        "WACCM-X/jumacs_waccmx_climatology_1985-2014.nc",
+        "combined/jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc",
+        "combined/jumacs_emac_waccmx_1985-2014_5deg_1km.nc",
+    )
+    for name in selected:
+        path = hpc / "products/climatology" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_rsync = fake_bin / "rsync"
+    fake_rsync.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$JUMACS_RSYNC_LOG"\n')
+    fake_rsync.chmod(0o755)
+    log = tmp_path / "rsync.log"
+    env = os.environ.copy()
+    env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+    env["JUMACS_RSYNC_LOG"] = str(log)
+    env["JUMACS_HPC_ROOT"] = str(hpc)
+    result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text().splitlines()
+    assert len(calls) == 6
+    assert "--delete" in calls[0] and str(hpc / "site") in calls[0]
+    assert all("--delete" not in call for call in calls[1:])
+    assert all(name in call for name, call in zip(selected, calls[1:]))
+    assert all(str(checkout / "products/climatology") in call for call in calls[1:])
+
+
+def test_local_mirror_rejects_missing_hpc_source(tmp_path):
+    env = os.environ.copy()
+    env["JUMACS_HPC_ROOT"] = str(tmp_path / "missing")
+    result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True)
+    assert result.returncode == 2 and "Mirror source is missing" in result.stderr

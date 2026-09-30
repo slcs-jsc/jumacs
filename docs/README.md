@@ -14,9 +14,10 @@ The repository root is the HPC working directory. Run JuMACS commands there.
 `products/release/` is reserved for files explicitly selected for publication. Nothing is copied there automatically.
 
 ```text
-HPC site/                 ──rsync──> local site mirror
-                          └─rsync──> web site mirror
-HPC products/release/     ──rsync──> public data location
+HPC site/                          ──rsync──> local clone/site/
+                                   └─rsync──> web site mirror
+HPC five finished climatology NCs  ──rsync──> local clone/products/climatology/
+HPC products/release/              ──rsync──> public data location
 ```
 
-`make mirror-local`, `make mirror-web` and `make publish-data` require their respective environment variables. They refuse an empty destination before invoking `rsync`. They are not run by the build or test targets. GitHub hosts code and documentation; the HPC filesystem hosts complete scientific data and generated products. No GitHub Pages configuration is used.
+Run `make mirror-local` in the local Git clone. It uses `~/jumount/data/slmet/model_data/jumacs` as the default source; set `JUMACS_HPC_ROOT` if the mount differs. It copies only the three grouped model climatologies and two compact extension NetCDF files for 1985–2014. `make mirror-web` and `make publish-data` still require non-empty destination environment variables. No mirror runs during builds or tests. GitHub hosts code and documentation; the HPC filesystem hosts complete scientific data and generated products. No GitHub Pages configuration is used.
