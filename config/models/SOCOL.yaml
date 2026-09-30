@@ -1,0 +1,22 @@
+model:
+  name: SOCOL
+  display_name: SOCOL
+  institution: unresolved
+  source_id: SOCOL
+  kind: ccmi
+  status: unresolved
+  slug: socol_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/SOCOL/refD1, zonal: data/processed/SOCOL/refD1, climatology: products/climatology/SOCOL}
+coordinates: {}
+variables: {}
+preferred_families: {}

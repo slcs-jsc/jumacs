@@ -1,0 +1,22 @@
+model:
+  name: CCSR-NIES-MIROC32
+  display_name: CCSR-NIES-MIROC32
+  institution: unresolved
+  source_id: CCSR-NIES-MIROC32
+  kind: ccmi
+  status: unresolved
+  slug: ccsr_nies_miroc32_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/CCSR-NIES-MIROC32/refD1, zonal: data/processed/CCSR-NIES-MIROC32/refD1, climatology: products/climatology/CCSR-NIES-MIROC32}
+coordinates: {}
+variables: {}
+preferred_families: {}

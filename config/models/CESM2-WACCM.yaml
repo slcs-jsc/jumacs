@@ -1,0 +1,22 @@
+model:
+  name: CESM2-WACCM
+  display_name: CESM2-WACCM
+  institution: unresolved
+  source_id: CESM2-WACCM
+  kind: ccmi
+  status: unresolved
+  slug: cesm2_waccm_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/CESM2-WACCM/refD1, zonal: data/processed/CESM2-WACCM/refD1, climatology: products/climatology/CESM2-WACCM}
+coordinates: {}
+variables: {}
+preferred_families: {}

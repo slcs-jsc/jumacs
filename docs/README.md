@@ -4,8 +4,8 @@ The repository root is the HPC working directory. Run JuMACS commands there.
 
 | Directory | Purpose | Git |
 | --- | --- | --- |
-| `src/`, `config/`, `tests/`, `docs/`, `scripts/` | Reproducible code, settings, tests and instructions | Track |
-| `data/raw/` | Unmodified downloaded GEOSCCM, EMAC and WACCM-X files | Ignore |
+| `src/`, `config/`, `tests/`, `docs/`, `scripts/` | Reproducible code, settings, tests and instructions (`config/models/` holds one registry file per source) | Track |
+| `data/raw/` | Unmodified downloaded files for registered sources (GEOSCCM, EMAC, WACCM-X today) | Ignore |
 | `data/processed/` | Native monthly zonal time series | Ignore |
 | `products/` | Climatologies, comparisons, manifests and diagnostics | Ignore |
 | `site/` | Generated static browser and plots | Ignore |

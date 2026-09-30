@@ -12,11 +12,42 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFESTS = {
-    "GEOSCCM": ROOT / "products/manifests/geosccm_refd1.json",
-    "EMAC": ROOT / "products/manifests/emac_refd1.json",
-    "WACCM-X": ROOT / "products/manifests/waccmx.json",
-}
+
+MANIFEST_KEYS = ("model", "experiment", "files", "selected_bytes_estimate")
+RECORD_KEYS = ("filename", "local_path", "source_url", "download_status")
+
+
+def is_manifest(data):
+    """True only for download manifests written by `jumacs download` on JUWELS."""
+    if not isinstance(data, dict) or any(key not in data for key in MANIFEST_KEYS):
+        return False
+    files = data["files"]
+    if not isinstance(files, list):
+        return False
+    return all(isinstance(record, dict) and all(key in record for key in RECORD_KEYS) for record in files)
+
+
+def load_manifest(path):
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ValueError("Not a readable manifest: {}".format(path)) from exc
+    if not is_manifest(data):
+        raise ValueError("Not a JuMACS download manifest (missing model/experiment/files records): {}".format(path))
+    return data
+
+
+def discover_manifests():
+    found = {}
+    for path in sorted((ROOT / "products/manifests").glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not is_manifest(data) or not isinstance(data["model"], str):
+            continue
+        found[data["model"]] = path
+    return found
 
 
 def save(path, manifest):
@@ -68,17 +99,17 @@ def transfer(record):
 
 
 def main():
+    manifests = discover_manifests()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=(*MANIFESTS, "all"), default="all")
+    parser.add_argument("--model", choices=(*manifests, "all"), default="all")
     parser.add_argument("--execute", action="store_true", help="Transfer pending files")
     args = parser.parse_args()
-    models = tuple(model for model, path in MANIFESTS.items() if path.exists()) if args.model == "all" else (args.model,)
+    models = tuple(manifests) if args.model == "all" else (args.model,)
     selected = []
     for model in models:
-        path = MANIFESTS[model]
-        manifest = json.loads(path.read_text())
-        expected_experiment = "transient-1950-2015" if model == "WACCM-X" else "refD1"
-        if manifest["model"] != model or manifest["experiment"] != expected_experiment:
+        path = manifests[model]
+        manifest = load_manifest(path)
+        if manifest["model"] != model:
             raise ValueError("Incorrect manifest: {}".format(path))
         files = manifest["files"]
         pending = sum(not (row["download_status"] == "complete" and (ROOT / row["local_path"]).is_file()) for row in files)

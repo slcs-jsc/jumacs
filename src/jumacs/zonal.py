@@ -2,7 +2,7 @@
 import numpy as np
 import xarray as xr
 
-from .config import ROOT, load_config
+from .config import ROOT, load_config, is_waccmx
 from .reader import open_source, source_files
 from .coordinates import hybrid_pressure
 
@@ -36,7 +36,7 @@ def build_zonal(model, variable):
                 longitude_checks.append(bool(len(longitudes) > 1 and np.max(gaps) <= 1.5 * np.median(gaps)))
             level_name = config["coordinates"]["level"]
             is_hybrid = (level_name in ds and (ds[level_name].attrs.get("standard_name")
-                         == "atmosphere_hybrid_sigma_pressure_coordinate" or model == "WACCM-X"))
+                         == "atmosphere_hybrid_sigma_pressure_coordinate" or is_waccmx(config)))
             # Limit the largest in-memory full field to 12 monthly samples.
             for start in range(0, ds.sizes["time"], 12):
                 chunk = ds.isel(time=slice(start, start + 12))
@@ -66,7 +66,7 @@ def build_zonal(model, variable):
     out.attrs = {"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"], "source_variable": name,
                  "source_dataset": config["model"]["dataset_uuid"], "source_archive": config["model"]["archive_base"],
                  "source_files": ";".join(source_attrs), "native_grid_preserved": "true",
-                 "monthly_time_label": "source interval midpoint" if model == "WACCM-X" else "source time coordinate",
+                 "monthly_time_label": "source interval midpoint" if is_waccmx(config) else "source time coordinate",
                  "source_longitude_global": str(all(longitude_checks)) if longitude_checks else "not_applicable_already_zonal"}
     dest = ROOT / config["paths"]["zonal"] / f"{name}_monthly_zonal.nc"
     dest.parent.mkdir(parents=True, exist_ok=True)

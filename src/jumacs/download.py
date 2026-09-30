@@ -5,7 +5,7 @@ from pathlib import Path
 import requests
 
 from .archive import load_inventory
-from .config import ROOT, load_config
+from .config import ROOT, load_config, is_waccmx, model_slug
 
 
 def select_files(model, start_year, end_year, variables=None):
@@ -13,14 +13,14 @@ def select_files(model, start_year, end_year, variables=None):
     inventory = load_inventory(model)
     if start_year > end_year:
         raise ValueError("start year exceeds end year")
-    if model == "WACCM-X":
+    if is_waccmx(config):
         first = min(int(f["start"][:4]) for f in inventory["files"])
         last = max(int(f["end"][:4]) for f in inventory["files"])
         if start_year < first or end_year > last:
             raise ValueError(f"WACCM-X monthly zonal archive covers {first}-{last}; requested {start_year}-{end_year}")
     wanted = set(variables or config["variables"].values())
     wanted = {config["variables"].get(v, v) for v in wanted}
-    if model == "WACCM-X":
+    if is_waccmx(config):
         available = set(inventory.get("dimensions", {}))
         selected = [f for f in inventory["files"] if start_year <= int(f["start"][:4]) <= end_year] if wanted & available else []
         return selected, sorted(wanted - available)
@@ -50,8 +50,9 @@ def select_files(model, start_year, end_year, variables=None):
 
 
 def manifest_path(model):
-    names = {"GEOSCCM": "geosccm_refd1.json", "EMAC": "emac_refd1.json", "WACCM-X": "waccmx.json"}
-    return ROOT / "products/manifests" / names[model]
+    config = load_config(model)
+    slug = config["model"].get("slug") or (model_slug(model) + "_refd1" if not is_waccmx(config) else "waccmx")
+    return ROOT / "products/manifests" / f"{slug}.json"
 
 
 def plan(model, start_year, end_year, variables=None):
@@ -59,7 +60,7 @@ def plan(model, start_year, end_year, variables=None):
     config = load_config(model)
     records = []
     for f in files:
-        local = ROOT / config["paths"]["raw"] / (f["filename"] if model == "WACCM-X" else f["family"] + "/" + f["variable"] + "/" + f["filename"])
+        local = ROOT / config["paths"]["raw"] / (f["filename"] if is_waccmx(config) else f["family"] + "/" + f["variable"] + "/" + f["filename"])
         records.append({**f, "model": model, "experiment": config["model"]["experiment"], "local_path": str(local.relative_to(ROOT)),
                         "download_status": "complete" if local.exists() and (not f["size_bytes"] or abs(local.stat().st_size - f["size_bytes"]) < f["size_bytes"] * .15) else "pending"})
     payload = {"model": model, "experiment": config["model"]["experiment"], "start_year": start_year, "end_year": end_year,

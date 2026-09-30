@@ -65,7 +65,8 @@ def coverage_model(model):
 
 def coverage_matrix():
     from .archive import TARGETS
-    models = ("GEOSCCM", "EMAC", "WACCM-X")
+    from .config import ready_model_names
+    models = ready_model_names()
     reports = {}
     for model in models:
         path = ROOT / "products/diagnostics" / "coverage" / model / "vertical_coverage.json"
@@ -93,19 +94,23 @@ def coverage_matrix():
 def coverage_plot():
     import matplotlib.pyplot as plt
     targets = ("temperature", "O3", "H2O", "CO2", "CH4", "N2O", "CO", "NO", "CFC-11", "CFC-12", "SF6")
-    models = ("GEOSCCM", "EMAC", "WACCM-X")
+    from .config import ready_model_names
+    models = tuple(m for m in ready_model_names() if (ROOT / "products/diagnostics" / "coverage" / m / "vertical_coverage.json").exists())
     reports = {}
     for model in models:
         path = ROOT / "products/diagnostics" / "coverage" / model / "vertical_coverage.json"
         reports[model] = {r["canonical_species"]: r for r in json.loads(path.read_text())} if path.exists() else {}
     fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
-    for model, offset, color in zip(models, (-.24, 0, .24), ("#097b87", "#cf7245", "#5b55aa")):
+    import numpy as np
+    palette = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    offsets = np.linspace(-.24, .24, len(models)) if len(models) > 1 else [0.0]
+    for index, (model, offset) in enumerate(zip(models, offsets)):
         x, y = [], []
-        for index, target in enumerate(targets):
+        for index_target, target in enumerate(targets):
             value = reports[model].get(target, {}).get("highest_valid_pressure_pa")
             if value is not None and value > 0:
-                x.append(index + offset); y.append(value)
-        ax.scatter(x, y, s=44, color=color, label=model, zorder=3)
+                x.append(index_target + offset); y.append(value)
+        ax.scatter(x, y, s=44, color=palette[index % len(palette)], label=model, zorder=3)
     ax.set(xticks=range(len(targets)), xticklabels=targets, yscale="log", ylabel="Lowest pressure with finite values (Pa)",
            title="JuMACS species-specific upper valid pressure")
     ax.invert_yaxis()

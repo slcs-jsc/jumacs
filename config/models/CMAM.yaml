@@ -1,0 +1,22 @@
+model:
+  name: CMAM
+  display_name: CMAM
+  institution: unresolved
+  source_id: CMAM
+  kind: ccmi
+  status: unresolved
+  slug: cmam_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/CMAM/refD1, zonal: data/processed/CMAM/refD1, climatology: products/climatology/CMAM}
+coordinates: {}
+variables: {}
+preferred_families: {}

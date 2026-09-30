@@ -1,0 +1,22 @@
+model:
+  name: NIWA-UKCA2
+  display_name: NIWA-UKCA2
+  institution: unresolved
+  source_id: NIWA-UKCA2
+  kind: ccmi
+  status: unresolved
+  slug: niwa_ukca2_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/NIWA-UKCA2/refD1, zonal: data/processed/NIWA-UKCA2/refD1, climatology: products/climatology/NIWA-UKCA2}
+coordinates: {}
+variables: {}
+preferred_families: {}

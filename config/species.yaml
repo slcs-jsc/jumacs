@@ -1,0 +1,80 @@
+# Canonical target species for the CCMI-2022 coverage matrices.
+# Canonical names match the keys of each model config's variables mapping.
+# unresolved: true marks species that no inspected source currently provides.
+species:
+  - {canonical: temperature, group: meteorology}
+  - {canonical: surface_pressure, group: meteorology}
+  - {canonical: geopotential_height, group: meteorology}
+  - {canonical: zonal_wind, group: dynamics}
+  - {canonical: meridional_wind, group: dynamics}
+  - {canonical: TEM_meridional_wind, group: dynamics}
+  - {canonical: TEM_vertical_velocity, group: dynamics}
+  - {canonical: EP_flux_meridional, group: dynamics}
+  - {canonical: EP_flux_vertical, group: dynamics}
+  - {canonical: mean_age, group: dynamics}
+  - {canonical: tropopause_pressure, group: tropopause}
+  - {canonical: tropopause_temperature, group: tropopause}
+  - {canonical: total_ozone_column, group: columns}
+  - {canonical: tropospheric_ozone_column, group: columns}
+  - {canonical: O3, group: ozone}
+  - {canonical: O3_strat, group: ozone}
+  - {canonical: H2O, group: long_lived}
+  - {canonical: CO2, group: long_lived}
+  - {canonical: CH4, group: long_lived}
+  - {canonical: N2O, group: long_lived}
+  - {canonical: SF6, group: long_lived, unresolved: true}
+  - {canonical: CO, group: chemistry}
+  - {canonical: H2, group: chemistry}
+  - {canonical: C2H6, group: chemistry}
+  - {canonical: C2H2, group: chemistry}
+  - {canonical: CH3Cl, group: chlorine_source}
+  - {canonical: CH3CCl3, group: chlorine_source}
+  - {canonical: CCl4, group: chlorine_source}
+  - {canonical: CFC-11, group: chlorine_source}
+  - {canonical: CFC-12, group: chlorine_source}
+  - {canonical: CFC-113, group: chlorine_source, unresolved: true}
+  - {canonical: CFC-114, group: chlorine_source, unresolved: true}
+  - {canonical: CFC-115, group: chlorine_source, unresolved: true}
+  - {canonical: HCFC-22, group: chlorine_source}
+  - {canonical: HCFC-141b, group: chlorine_source}
+  - {canonical: HCFC-142b, group: chlorine_source}
+  - {canonical: ClO, group: inorganic_chlorine}
+  - {canonical: HCl, group: inorganic_chlorine}
+  - {canonical: ClONO2, group: inorganic_chlorine}
+  - {canonical: Cl2O2, group: inorganic_chlorine}
+  - {canonical: OClO, group: inorganic_chlorine}
+  - {canonical: HOCl, group: inorganic_chlorine}
+  - {canonical: Cly, group: inorganic_chlorine, note: family sum}
+  - {canonical: CH3Br, group: bromine_source}
+  - {canonical: Halon-1211, group: bromine_source}
+  - {canonical: Halon-1301, group: bromine_source}
+  - {canonical: Halon-2402, group: bromine_source}
+  - {canonical: CH2Br2, group: bromine_source}
+  - {canonical: CH2BrCl, group: bromine_source}
+  - {canonical: CHBr2Cl, group: bromine_source}
+  - {canonical: CHBr3, group: bromine_source}
+  - {canonical: CHBrCl2, group: bromine_source}
+  - {canonical: BrO, group: inorganic_bromine}
+  - {canonical: HBr, group: inorganic_bromine}
+  - {canonical: Br, group: inorganic_bromine}
+  - {canonical: BrCl, group: inorganic_bromine}
+  - {canonical: BrONO2, group: inorganic_bromine}
+  - {canonical: HOBr, group: inorganic_bromine}
+  - {canonical: Bry, group: inorganic_bromine, note: family sum}
+  - {canonical: 'NO', group: nitrogen}
+  - {canonical: NO2, group: nitrogen}
+  - {canonical: HNO3, group: nitrogen}
+  - {canonical: N2O5, group: nitrogen}
+  - {canonical: HNO4, group: nitrogen}
+  - {canonical: NOy, group: nitrogen, note: family sum}
+  - {canonical: N, group: nitrogen}
+  - {canonical: OH, group: odd_hydrogen}
+  - {canonical: HO2, group: odd_hydrogen}
+  - {canonical: H2O2, group: odd_hydrogen}
+  - {canonical: CH2O, group: chemistry}
+  - {canonical: CH3OOH, group: chemistry}
+  - {canonical: SO2, group: sulfur}
+  - {canonical: COS, group: sulfur}
+  - {canonical: sulfate_SAD, group: aerosol_psc}
+  - {canonical: PSC_ice_SAD, group: aerosol_psc}
+  - {canonical: PSC_NAT_SAD, group: aerosol_psc}

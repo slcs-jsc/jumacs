@@ -1,0 +1,22 @@
+model:
+  name: ACCESS-CM2-Chem
+  display_name: ACCESS-CM2-Chem
+  institution: unresolved
+  source_id: ACCESS-CM2-Chem
+  kind: ccmi
+  status: unresolved
+  slug: access_cm2_chem_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/ACCESS-CM2-Chem/refD1, zonal: data/processed/ACCESS-CM2-Chem/refD1, climatology: products/climatology/ACCESS-CM2-Chem}
+coordinates: {}
+variables: {}
+preferred_families: {}

@@ -2,18 +2,24 @@
 import numpy as np
 import xarray as xr
 
-from .config import ROOT, load_config, reference_period
+from .config import ROOT, load_config, reference_period, is_waccmx, model_slug
+
+
+def _slug(model, config):
+    slug = config["model"].get("slug")
+    if slug:
+        return slug
+    return "waccmx" if is_waccmx(config) else model_slug(model) + "_refd1"
 
 
 def product_name(model, start_year, end_year):
     config = load_config(model)
-    slug = "waccmx" if model == "WACCM-X" else model.lower() + "_refd1"
-    return f"jumacs_{slug}_climatology_{start_year}-{end_year}.nc"
+    return f"jumacs_{_slug(model, config)}_climatology_{start_year}-{end_year}.nc"
 
 
 def variable_product_name(model, name, start_year, end_year):
-    slug = "waccmx" if model == "WACCM-X" else model.lower() + "_refd1"
-    return f"jumacs_{slug}_{name}_climatology_{start_year}-{end_year}.nc"
+    config = load_config(model)
+    return f"jumacs_{_slug(model, config)}_{name}_climatology_{start_year}-{end_year}.nc"
 
 
 def monthly_climatology(data, start_year, end_year):

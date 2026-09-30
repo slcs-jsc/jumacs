@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = {
     "GEOSCCM": ROOT / "products/manifests/geosccm_refd1.json",
@@ -21,10 +23,13 @@ def submit(command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", required=True)
-    parser.add_argument("--start-year", type=int, default=1985)
-    parser.add_argument("--end-year", type=int, default=2014)
+    parser.add_argument("--start-year", type=int)
+    parser.add_argument("--end-year", type=int)
     parser.add_argument("--execute", action="store_true", help="Submit jobs; otherwise show readiness")
     args = parser.parse_args()
+    reference = yaml.safe_load((ROOT / "config/climatology.yaml").read_text())["reference_period"]
+    args.start_year = args.start_year or reference["start_year"]
+    args.end_year = args.end_year or reference["end_year"]
     if args.start_year > args.end_year:
         parser.error("Invalid period")
     plans = {}

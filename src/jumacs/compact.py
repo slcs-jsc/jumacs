@@ -6,7 +6,7 @@ import numpy as np
 import xarray as xr
 
 from .climatology import variable_product_name
-from .config import ROOT, load_config
+from .config import ROOT, load_config, has_capability, reference_period
 
 
 def interpolate_profile(height_km, values, target_km):
@@ -81,12 +81,16 @@ def _on_grid(ds, height_ds, latitude, height_km):
     return output
 
 
-def build_compact(lower_model, start_year=1985, end_year=2014,
+def build_compact(lower_model, start_year=None, end_year=None,
                   latitude_step=5, altitude_step=1, transition_start=55,
                   transition_end=65, variables=None):
     """Create one lower-model→WACCM-X product; never average CCMI models."""
-    if lower_model not in ("GEOSCCM", "EMAC"):
-        raise ValueError("Lower model must be GEOSCCM or EMAC")
+    if not has_capability(lower_model, "compact_waccmx"):
+        raise ValueError(f"{lower_model} is not registered for compact WACCM-X extension; "
+                         "set capabilities.compact_waccmx in config/models after validating the pairing")
+    reference = reference_period()["reference_period"]
+    start_year = start_year or reference["start_year"]
+    end_year = end_year or reference["end_year"]
     if 170 % latitude_step or 120 % altitude_step:
         raise ValueError("Grid steps must evenly divide 170° latitude and 120 km")
     latitude = np.arange(-85, 86, latitude_step, dtype=float)
@@ -144,7 +148,9 @@ def build_compact(lower_model, start_year=1985, end_year=2014,
                 "upper_source_dataset": upper_config["model"]["dataset_uuid"],
                 "climatology_period": f"{start_year}-{end_year}",
                 "reference_period_years": end_year-start_year+1,
-                "nominal_reference_year": 2000,
+                "nominal_reference_year": (reference["nominal_reference_year"]
+                                           if (start_year, end_year) == (reference["start_year"], reference["end_year"])
+                                           else int(round((start_year + end_year) / 2))),
                 "latitude_step_degrees": latitude_step, "altitude_step_km": altitude_step,
                 "transition_start_km": transition_start, "transition_end_km": transition_end,
                 "transition_method": "raised cosine on geopotential height where both fields are finite",

@@ -1,11 +1,22 @@
 model:
   name: WACCM-X
+  display_name: WACCM-X transient 1950-2015
+  institution: NCAR
+  source_id: WACCM-X
+  kind: whole_atmosphere
+  status: ready
+  slug: waccmx
   archive_model: WACCM-X
   experiment: transient-1950-2015
   dataset_uuid: dc91f5e39ae34fd883af81dfdbaf659c
   archive_base: https://data.ceda.ac.uk/badc/deposited2020/WACCM-X_1950-2015/data
   source_kind: monthly_zonal_multivariable
-period: {start_year: 1985, end_year: 2014}
+capabilities:
+  archive_inventory: true
+  download: true
+  zonal_processing: true
+  climatology: true
+  compact_waccmx: false
 paths: {raw: data/raw/WACCM-X/transient-1950-2015, zonal: data/processed/WACCM-X/transient-1950-2015, climatology: products/climatology/WACCM-X}
 coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: PS, pressure: lev, hybrid_a: hyam, hybrid_b: hybm, reference_pressure: P0}
 variables:

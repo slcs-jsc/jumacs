@@ -1,0 +1,22 @@
+model:
+  name: MIROC-ES2H
+  display_name: MIROC-ES2H
+  institution: unresolved
+  source_id: MIROC-ES2H
+  kind: ccmi
+  status: unresolved
+  slug: miroc_es2h_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/MIROC-ES2H/refD1, zonal: data/processed/MIROC-ES2H/refD1, climatology: products/climatology/MIROC-ES2H}
+coordinates: {}
+variables: {}
+preferred_families: {}

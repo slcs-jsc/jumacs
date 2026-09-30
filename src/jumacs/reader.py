@@ -3,13 +3,13 @@ import re
 import cftime
 import xarray as xr
 
-from .config import load_config
+from .config import load_config, is_waccmx
 
 
 def open_source(path, model, variable):
     config = load_config(model)
     name = config["variables"].get(variable, variable)
-    if model == "WACCM-X":
+    if is_waccmx(config):
         valid_name = path.name.endswith("_zm.nc") and ".cam.h0." in path.name
     else:
         valid_name = "_refD1_" in path.name and f"_{config['model']['archive_model']}_" in path.name
@@ -18,7 +18,7 @@ def open_source(path, model, variable):
     ds = xr.open_dataset(path, decode_times=True, use_cftime=True)
     if name not in ds:
         ds.close(); raise KeyError(f"{name} absent from {path.name}")
-    if model == "WACCM-X":
+    if is_waccmx(config):
         match = re.search(r"\.(\d{4})-(\d{2})_zm\.nc$", path.name)
         year, month = int(match[1]), int(match[2])
         if ds.sizes.get("time") != 1:
@@ -46,7 +46,7 @@ def source_files(model, variable):
     config = load_config(model)
     name = config["variables"].get(variable, variable)
     base = ROOT / config["paths"]["raw"]
-    if model == "WACCM-X":
+    if is_waccmx(config):
         files = sorted(base.glob("*_zm.nc"))
         if files:
             return files

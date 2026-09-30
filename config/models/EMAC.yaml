@@ -1,10 +1,21 @@
 model:
   name: EMAC
+  display_name: EMAC-CCMI2
+  institution: DLR
+  source_id: EMAC-CCMI2
+  kind: ccmi
+  status: ready
+  slug: emac_refd1
   archive_model: EMAC-CCMI2
   experiment: refD1
   dataset_uuid: 9b15ae551fda4035a7940a3adbe31691
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/DLR/EMAC-CCMI2/refD1/r1i1p1f1
-period: {start_year: 1985, end_year: 2014}
+capabilities:
+  archive_inventory: true
+  download: true
+  zonal_processing: true
+  climatology: true
+  compact_waccmx: true
 paths: {raw: data/raw/EMAC/refD1, zonal: data/processed/EMAC/refD1, climatology: products/climatology/EMAC}
 coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: ps, pressure: plev, hybrid_a: ap, hybrid_b: b}
 variables:

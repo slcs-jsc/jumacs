@@ -1,0 +1,22 @@
+model:
+  name: UKESM1-StratTrop
+  display_name: UKESM1-StratTrop
+  institution: unresolved
+  source_id: UKESM1-StratTrop
+  kind: ccmi
+  status: unresolved
+  slug: ukesm1_strattrop_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/UKESM1-StratTrop/refD1, zonal: data/processed/UKESM1-StratTrop/refD1, climatology: products/climatology/UKESM1-StratTrop}
+coordinates: {}
+variables: {}
+preferred_families: {}

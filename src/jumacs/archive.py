@@ -10,11 +10,11 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import requests
 
-from .config import ROOT, load_config
+from .config import ROOT, load_config, model_names, is_waccmx, species_registry
 
 FAMILIES = ("Amon", "AmonZ")
 FILE_RE = re.compile(r"_(\d{6})-(\d{6})\.nc$")
-TARGETS = ["temperature", "surface_pressure", "geopotential_height", "O3", "H2O", "CO2", "CH4", "N2O", "CO", "HNO3", "NO", "NO2", "HCl", "ClO", "ClONO2", "BrO", "HOCl", "N2O5", "HNO4", "SF6", "CFC-11", "CFC-12", "CFC-113", "CFC-114", "CFC-115", "HCFC-22", "HCFC-141b", "HCFC-142b", "Halon-1211", "Halon-1301", "Halon-2402", "Cly", "Bry", "NOy"]
+TARGETS = [entry["canonical"] for entry in species_registry()]
 CATALOGUE = "https://catalogue.ceda.ac.uk/uuid/{}/"
 
 
@@ -98,8 +98,17 @@ def _remote_dimensions(item):
 
 def inspect_model(model, workers=12):
     config = load_config(model)
-    if model == "WACCM-X":
+    if is_waccmx(config):
         return inspect_waccmx(config)
+    if config["model"].get("status", "ready") != "ready":
+        root = ROOT / "products/diagnostics" / "inspection" / model
+        root.mkdir(parents=True, exist_ok=True)
+        payload = {"model": model, "status": "unresolved",
+                   "inspected_utc": datetime.now(timezone.utc).isoformat(),
+                   "notes": "Archive identifiers unresolved; complete config/models/{}.yaml before inspection.".format(model)}
+        (root / "archive_inventory.json").write_text(json.dumps(payload, indent=2))
+        (root / "summary.json").write_text(json.dumps(payload, indent=2))
+        return payload
     base = config["model"]["archive_base"].rstrip("/")
     tasks = []
     for family in FAMILIES:
@@ -205,29 +214,77 @@ def load_inventory(model):
     return json.loads(path.read_text())
 
 
+def discovered_zm_variables(model):
+    """Three-dimensional fields auto-discovered from an inspected monthly _zm.nc inventory."""
+    path = ROOT / "products/diagnostics" / "inspection" / model / "archive_inventory.json"
+    if not path.exists():
+        return set()
+    inventory = json.loads(path.read_text())
+    coordinates = set(inventory.get("coordinate_variables", {})) | {"time", "time_bnds", "lat", "lon", "lev", "ilev", "hyam", "hybm", "hyai", "hybi", "P0"}
+    discovered = set()
+    for name, dims in inventory.get("dimensions", {}).items():
+        cleaned = [d.strip() for d in dims]
+        if name in coordinates or "time" not in cleaned or "lat" not in cleaned:
+            continue
+        if set(cleaned) & {"lev", "ilev", "plev"}:
+            discovered.add(name)
+    return discovered
+
+
 def variable_matrix():
-    inventories = {m: load_inventory(m) for m in ("GEOSCCM", "EMAC", "WACCM-X")}
-    configs = {m: load_config(m) for m in inventories}
+    models = model_names()
+    configs, inventories = {}, {}
+    for model in models:
+        configs[model] = load_config(model)
+        try:
+            inventories[model] = load_inventory(model)
+        except (FileNotFoundError, KeyError):
+            inventories[model] = None
     coverage = {}
-    for model in inventories:
+    for model in models:
         path = ROOT / "products/diagnostics" / "coverage" / model / "vertical_coverage.json"
         coverage[model] = {row["variable"]: row for row in json.loads(path.read_text())} if path.exists() else {}
-    names = list(dict.fromkeys(TARGETS + [k for c in configs.values() for k in c["variables"]]))
+    groups = {entry["canonical"]: entry.get("group", "") for entry in species_registry()}
+    names = list(dict.fromkeys(list(groups) + [k for c in configs.values() for k in c["variables"]]))
     rows = []
     for canonical in names:
-        row = {"canonical_species": canonical}
+        row = {"canonical_species": canonical, "group": groups.get(canonical, "")}
         units = []
-        for model in inventories:
+        for model in models:
+            inventory = inventories[model]
+            ready = configs[model]["model"].get("status", "ready") == "ready"
             variable = configs[model]["variables"].get(canonical, "")
-            found = bool(variable and (variable in inventories[model].get("dimensions", {}) if model == "WACCM-X" else any(f["variable"] == variable for f in inventories[model]["files"])))
-            row[model + "_variable"] = variable if found else ""
-            row[model + "_found"] = found
-            row[model + "_time_coverage"] = (f"{min(f['start'] for f in inventories[model]['files'])}-{max(f['end'] for f in inventories[model]['files'])}" if found else "")
-            row[model + "_units"] = inventories[model]["catalogue_metadata"].get(variable, {}).get("units", "") if found else ""
-            measured = coverage[model].get(variable, {})
-            row[model + "_vertical_coverage"] = (f"{measured['highest_valid_pressure_pa']}-{measured['lowest_valid_pressure_pa']} Pa" if measured and measured["highest_valid_pressure_pa"] is not None else "pending data-based diagnostic" if found else "")
+            status, found = "not_inspected", False
+            time_coverage, variable_units, vertical = "", "", ""
+            if not ready or (inventory is not None and inventory.get("status") == "unresolved"):
+                status = "unresolved"
+            elif inventory is not None:
+                if not variable:
+                    status = "no_mapping"
+                else:
+                    if "dimensions" in inventory:
+                        found = variable in inventory["dimensions"]
+                        if inventory.get("files"):
+                            time_coverage = f"{min(f['start'] for f in inventory['files'])}-{max(f['end'] for f in inventory['files'])}"
+                    else:
+                        matching = [f for f in inventory["files"] if f["variable"] == variable]
+                        found = bool(matching)
+                        if matching:
+                            time_coverage = f"{min(f['start'] for f in matching)}-{max(f['end'] for f in matching)}"
+                    variable_units = inventory["catalogue_metadata"].get(variable, {}).get("units", "")
+                    status = "ok" if found else "absent"
+                    measured = coverage[model].get(variable, {})
+                    if found:
+                        vertical = (f"{measured['highest_valid_pressure_pa']}-{measured['lowest_valid_pressure_pa']} Pa"
+                                    if measured and measured["highest_valid_pressure_pa"] is not None else "pending data-based diagnostic")
+            row[model + "_status"] = status
+            row[model + "_available"] = found
+            row[model + "_variable"] = variable
+            row[model + "_time_coverage"] = time_coverage if found else ""
+            row[model + "_units"] = variable_units if found else ""
+            row[model + "_vertical_coverage"] = vertical
             if found:
-                units.append(inventories[model]["catalogue_metadata"].get(variable, {}).get("units", ""))
+                units.append(variable_units)
         row["units"] = ";".join(sorted(set(filter(None, units))))
         row["notes"] = "family sum" if canonical in ("Cly", "Bry", "NOy") else ""
         rows.append(row)
@@ -235,4 +292,32 @@ def variable_matrix():
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
+    return path
+
+
+def native_variable_report():
+    """List native fields found in inspected inventories with their canonical mapping status."""
+    rows = []
+    for model in model_names():
+        try:
+            inventory = load_inventory(model)
+        except (FileNotFoundError, KeyError):
+            continue
+        if inventory is None or inventory.get("status") == "unresolved":
+            continue
+        config = load_config(model)
+        mappings = {native: canonical for canonical, native in config["variables"].items()}
+        if "dimensions" in inventory:
+            natives = sorted(inventory["dimensions"])
+        else:
+            natives = sorted({f["variable"] for f in inventory["files"]})
+        for native in natives:
+            canonical = mappings.get(native, "")
+            rows.append({"model": model, "native_variable": native, "canonical_species": canonical,
+                         "mapping_status": "mapped" if canonical else "native_only"})
+    path = ROOT / "products/comparison" / "native_variables.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["model", "native_variable", "canonical_species", "mapping_status"])
+        writer.writeheader(); writer.writerows(rows)
     return path

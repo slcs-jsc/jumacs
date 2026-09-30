@@ -1,0 +1,22 @@
+model:
+  name: IPSL-CM6A-ATM-LR-REPROBUS
+  display_name: IPSL-CM6A-ATM-LR-REPROBUS
+  institution: unresolved
+  source_id: IPSL-CM6A-ATM-LR-REPROBUS
+  kind: ccmi
+  status: unresolved
+  slug: ipsl_cm6a_atm_lr_reprobus_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/IPSL-CM6A-ATM-LR-REPROBUS/refD1, zonal: data/processed/IPSL-CM6A-ATM-LR-REPROBUS/refD1, climatology: products/climatology/IPSL-CM6A-ATM-LR-REPROBUS}
+coordinates: {}
+variables: {}
+preferred_families: {}

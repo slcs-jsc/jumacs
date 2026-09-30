@@ -1,10 +1,11 @@
 PYTHON ?= python3
 CLI = PYTHONPATH="src:$(PYTHONPATH)" $(PYTHON) -m jumacs.cli
 MODEL ?= GEOSCCM
-START ?= 1985
-END ?= 2014
+START ?=
+END ?=
+PERIOD = $(if $(START),--start-year $(START)) $(if $(END),--end-year $(END))
 
-.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download zonal climatology compact compare validate coverage trends quicklook site mirror-local mirror-web publish-data
+.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute zonal climatology compact compare validate coverage trends quicklook site mirror-local mirror-web publish-data
 
 test:
 	@PYTHONPATH="src:$(PYTHONPATH)" $(PYTHON) -m pytest -q
@@ -19,15 +20,18 @@ inspect-emac:
 inspect-waccmx:
 	@$(CLI) inspect --model WACCM-X
 download:
-	@$(CLI) download --model $(MODEL) --start-year $(START) --end-year $(END) --execute
+	@$(CLI) download --model $(MODEL) $(PERIOD)
+download-plan: download
+download-execute:
+	@$(CLI) download --model $(MODEL) $(PERIOD) --execute
 zonal:
 	@$(CLI) zonal --model $(MODEL)
 climatology:
-	@$(CLI) climatology --model $(MODEL) --start-year $(START) --end-year $(END)
+	@$(CLI) climatology --model $(MODEL) $(PERIOD)
 compact:
-	@$(CLI) compact --model $(MODEL) --start-year $(START) --end-year $(END)
+	@$(CLI) compact --model $(MODEL) $(PERIOD)
 compare:
-	@$(CLI) compare --models GEOSCCM EMAC --start-year $(START) --end-year $(END)
+	@$(CLI) compare --models GEOSCCM EMAC $(PERIOD)
 validate:
 	@$(CLI) validate --model $(MODEL)
 coverage:
@@ -35,7 +39,7 @@ coverage:
 trends:
 	@$(CLI) trends --model $(MODEL)
 quicklook:
-	@$(CLI) quicklook --model $(MODEL) --start-year $(START) --end-year $(END)
+	@$(CLI) quicklook --model $(MODEL) $(PERIOD)
 site:
 	@$(PYTHON) scripts/build_index.py
 mirror-local:

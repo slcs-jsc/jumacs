@@ -1,0 +1,22 @@
+model:
+  name: CNRM-MOCAGE
+  display_name: CNRM-MOCAGE
+  institution: unresolved
+  source_id: CNRM-MOCAGE
+  kind: ccmi
+  status: unresolved
+  slug: cnrm_mocage_refd1
+  archive_model: unresolved
+  experiment: refD1
+  dataset_uuid: unresolved
+  archive_base: unresolved
+capabilities:
+  archive_inventory: false
+  download: false
+  zonal_processing: false
+  climatology: false
+  compact_waccmx: false
+paths: {raw: data/raw/CNRM-MOCAGE/refD1, zonal: data/processed/CNRM-MOCAGE/refD1, climatology: products/climatology/CNRM-MOCAGE}
+coordinates: {}
+variables: {}
+preferred_families: {}
