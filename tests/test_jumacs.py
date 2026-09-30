@@ -281,3 +281,63 @@ def test_download_plan_writes_manifest_without_transfer(monkeypatch, tmp_path):
     assert payload["missing_variables"] == []
     assert payload["files"][0]["local_path"].startswith(load_config("GEOSCCM")["paths"]["raw"])
     assert not any(tmp_path.rglob("*.nc"))
+
+
+def _synthetic_inspections(tmp_path):
+    import json
+    base = tmp_path / "products/diagnostics/inspection"
+    (base / "SOCOL").mkdir(parents=True)
+    (base / "SOCOL" / "archive_inventory.json").write_text(json.dumps({"dataset_uuid": "x", "files": [
+        {"family": "Amon", "variable": "o3", "start": "196001", "end": "201812"},
+        {"family": "Amon", "variable": "hcl", "start": "196001", "end": "201812"},
+        {"family": "AmonZ", "variable": "o3", "start": "196001", "end": "201812"},
+        {"family": "AmonZ", "variable": "clo", "start": "196001", "end": "201812"},
+        {"family": "AmonZ", "variable": "unmapped_tracer", "start": "196001", "end": "201812"}]}))
+    (base / "WACCM-X").mkdir(parents=True)
+    (base / "WACCM-X" / "archive_inventory.json").write_text(json.dumps({"dataset_uuid": "y", "files": [
+        {"family": "zm", "variable": "O3", "start": "195001", "end": "201512"}], "dimensions": {"O3": ["time", "lat", "lev"], "NO2": ["time", "lat", "lev"], "CFC11": ["time", "lat", "lev"]}}))
+    return base
+
+
+def test_model_summary_rows_counts_and_status(tmp_path):
+    from jumacs.summary import model_summary_rows
+    _synthetic_inspections(tmp_path)
+    (tmp_path / "products/diagnostics/inspection/MIROC-ES2H").mkdir()
+    (tmp_path / "products/diagnostics/inspection/MIROC-ES2H/archive_inventory.json").write_text('{"status": "unresolved"}')
+    rows = {row["model"]: row for row in model_summary_rows(tmp_path)}
+    socol = rows["SOCOL"]
+    assert socol["status"] == "ready" and socol["file_count"] == 5
+    assert socol["amon_variable_count"] == 2 and socol["amonz_variable_count"] == 3
+    assert socol["amonz_only_variable_count"] == 2 and socol["native_variable_count"] == 4
+    assert socol["first_month"] == "196001" and socol["last_month"] == "201812"
+    assert socol["mapped_species_count"] == 3
+    assert rows["MIROC-ES2H"]["status"] == "unresolved" and rows["MIROC-ES2H"]["file_count"] == ""
+    assert rows["GEOSCCM"]["status"] == "not_inspected"
+    assert rows["WACCM-X"]["kind"] == "whole_atmosphere" and rows["WACCM-X"]["native_variable_count"] == 3
+    assert rows["WACCM-X"]["amon_variable_count"] == ""
+
+
+def test_species_summary_marks_coverage_and_waccmx(tmp_path):
+    from jumacs.summary import species_summary_rows
+    _synthetic_inspections(tmp_path)
+    rows = {row["species"]: row for row in species_summary_rows(tmp_path)}
+    assert rows["O3"]["models_available"] == 1 and rows["O3"]["models"] == "SOCOL"
+    assert rows["O3"]["waccmx_available"] == "yes"
+    assert rows["ClO"]["amonz_only_models"] == 1
+    assert rows["NO2"]["models_available"] == 0 and rows["NO2"]["waccmx_available"] == "no"
+    assert rows["CFC-11"]["waccmx_available"] == "yes"
+    assert rows["SF6"]["models_available"] == 0 and rows["SF6"]["waccmx_available"] == "no"
+
+
+def test_write_summaries_offline_and_deterministic(tmp_path, monkeypatch):
+    import jumacs.summary as summary
+    _synthetic_inspections(tmp_path)
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network access")))
+    first, second = summary.write_summaries(tmp_path), summary.write_summaries(tmp_path)
+    assert [p.name for p in first] == ["model_summary.csv", "species_summary.csv", "summary.md"]
+    for a, b in zip(first, second):
+        assert a.read_bytes() == b.read_bytes()
+    text = (tmp_path / "products/comparison/summary.md").read_text()
+    assert "## WACCM-X" in text and "unresolved" in text
+    assert not any(tmp_path.rglob("*.nc"))

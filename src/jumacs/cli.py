@@ -56,7 +56,13 @@ def main(argv=None):
     compact.add_argument("--transition-start", type=float, default=55)
     compact.add_argument("--transition-end", type=float, default=65)
     compact.add_argument("--variable", action="append")
+    sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
     args = parser.parse_args(argv)
+    if args.command == "summary":
+        from .summary import write_summaries
+        for path in write_summaries():
+            print(path)
+        return
     reference = reference_period()["reference_period"]
     if args.command == "compact":
         models = models_with_capability("compact_waccmx") if args.model == "all" else (args.model,)

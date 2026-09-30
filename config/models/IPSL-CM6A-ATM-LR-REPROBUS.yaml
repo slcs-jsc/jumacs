@@ -20,5 +20,60 @@ capabilities:
   compact_waccmx: false
 paths: {raw: data/raw/IPSL-CM6A-ATM-LR-REPROBUS/refD1, zonal: data/processed/IPSL-CM6A-ATM-LR-REPROBUS/refD1, climatology: products/climatology/IPSL-CM6A-ATM-LR-REPROBUS}
 coordinates: {}
-variables: {}
+variables:
+  Br: br
+  BrCl: brcl
+  BrO: bro
+  BrONO2: brono2
+  Bry: bry
+  CCl4: ccl4
+  CFC-11: cfcl3
+  CFC-12: cf2cl2
+  CH2Br2: ch2br2
+  CH2O: ch2o
+  CH3Br: ch3br
+  CH3CCl3: ch3ccl3
+  CH3Cl: ch3cl
+  CH3OOH: ch3ooh
+  CH4: ch4
+  CO: co
+  Cl2O2: cl2o2
+  ClO: clo
+  ClONO2: clono2
+  Cly: cly
+  H2: h2
+  H2O: h2o
+  H2O2: h2o2
+  HBr: hbr
+  HCFC-22: chclf2
+  HCl: hcl
+  HNO3: hno3
+  HO2: ho2
+  HOBr: hobr
+  HOCl: hocl
+  Halon-1211: cbrclf2
+  Halon-1301: cbrf3
+  N: n
+  N2O: n2o
+  N2O5: n2o5
+  'NO': 'no'
+  NO2: no2
+  NOy: noy
+  O3: o3
+  OClO: oclo
+  OH: oh
+  PSC_NAT_SAD: sadnat
+  PSC_ice_SAD: sadice
+  geopotential_height: zg
+  mean_age: meanage
+  meridional_wind: va
+  sulfate_SAD: sadsulf
+  surface_pressure: ps
+  temperature: ta
+  total_ozone_column: toz
+  tropopause_altitude: ztp
+  tropopause_pressure: ptp
+  tropopause_temperature: tatp
+  tropospheric_ozone_column: tropoz
+  zonal_wind: ua
 preferred_families: {}
