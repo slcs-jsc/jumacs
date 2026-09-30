@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import requests
 
 from .archive import load_inventory
@@ -55,17 +56,66 @@ def manifest_path(model):
     return ROOT / "products/manifests" / f"{slug}.json"
 
 
+def _record(config, model, f):
+    local = ROOT / config["paths"]["raw"] / (f["filename"] if is_waccmx(config) else f["family"] + "/" + f["variable"] + "/" + f["filename"])
+    complete = local.exists() and (not f["size_bytes"] or abs(local.stat().st_size - f["size_bytes"]) < f["size_bytes"] * .15)
+    return {**f, "model": model, "experiment": config["model"]["experiment"], "local_path": str(local.relative_to(ROOT)),
+            "download_status": "complete" if complete else "pending"}
+
+
 def plan(model, start_year, end_year, variables=None):
     files, missing = select_files(model, start_year, end_year, variables)
     config = load_config(model)
-    records = []
-    for f in files:
-        local = ROOT / config["paths"]["raw"] / (f["filename"] if is_waccmx(config) else f["family"] + "/" + f["variable"] + "/" + f["filename"])
-        records.append({**f, "model": model, "experiment": config["model"]["experiment"], "local_path": str(local.relative_to(ROOT)),
-                        "download_status": "complete" if local.exists() and (not f["size_bytes"] or abs(local.stat().st_size - f["size_bytes"]) < f["size_bytes"] * .15) else "pending"})
+    records = [_record(config, model, f) for f in files]
     payload = {"model": model, "experiment": config["model"]["experiment"], "start_year": start_year, "end_year": end_year,
                "selected_bytes_estimate": sum(f["size_bytes"] or 0 for f in files),
                "size_is_rounded_listing_estimate": True, "missing_variables": missing, "files": records}
+    path = manifest_path(model); path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+    return payload
+
+
+def full_plan(model):
+    """Plan a complete mirror of the configured archive member: every inventoried file and family."""
+    config = load_config(model)
+    inventory = load_inventory(model)
+    files = list(inventory["files"])
+    waccmx = is_waccmx(config)
+    plannable = [f for f in files if f.get("source_url")]
+    latest = {}
+    for f in plannable:
+        key = (f["family"], f["filename"]) if waccmx else (f["family"], f["variable"], f.get("grid", ""), f["start"], f["end"])
+        if key not in latest or f.get("version", "") > latest[key].get("version", ""):
+            latest[key] = f
+    records = [_record(config, model, latest[key]) for key in sorted(latest)]
+    families = {}
+    for f in files:
+        families.setdefault(f["family"], {"inventory": 0, "planned": 0})["inventory"] += 1
+    for r in records:
+        families[r["family"]]["planned"] += 1
+    members = sorted({m for r in records for m in re.findall(r"r\d+i\d+p\d+f\d+", r["filename"])})
+    complete = [r for r in records if r["download_status"] == "complete"]
+    pending = [r for r in records if r["download_status"] != "complete"]
+    model_config = config["model"]
+    payload = {"model": model, "experiment": model_config["experiment"], "mode": "full_archive",
+               "dataset_uuid": model_config["dataset_uuid"],
+               "member": ",".join(members) if members else "n/a",
+               "first_month": min(f["start"] for f in files), "last_month": max(f["end"] for f in files),
+               "inventory_file_count": len(files), "planned_file_count": len(records),
+               "deduplicated_count": len(plannable) - len(records),
+               "unplannable_count": len(files) - len(plannable),
+               "inventory_bytes": sum(f["size_bytes"] or 0 for f in files),
+               "planned_bytes": sum(r["size_bytes"] or 0 for r in records),
+               "missing_remote_size_count": sum(1 for f in files if not f["size_bytes"]),
+               "families": {k: families[k] for k in sorted(families)},
+               "already_complete_file_count": len(complete),
+               "already_complete_bytes": sum(r["size_bytes"] or 0 for r in complete),
+               "pending_file_count": len(pending),
+               "pending_bytes": sum(r["size_bytes"] or 0 for r in pending),
+               "selected_bytes_estimate": sum(r["size_bytes"] or 0 for r in records),
+               "size_is_rounded_listing_estimate": True, "files": records}
+    if model_config.get("dataset_uuid_scope"):
+        payload["dataset_uuid_scope"] = model_config["dataset_uuid_scope"]
     path = manifest_path(model); path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
     return payload

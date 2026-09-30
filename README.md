@@ -42,11 +42,13 @@ jumacs inspect --model GEOSCCM
 jumacs inspect --model EMAC
 jumacs inspect --model WACCM-X
 jumacs download --model WACCM-X --start-year 1985 --end-year 2014  # size plan only
+jumacs download --model GEOSCCM --all-files  # complete-archive mirror plan (all families/members, latest versions)
+jumacs download-audit  # audit all mirror plans, write products/comparison/download_plan_summary.{csv,md}
 ```
 
 `scripts/python_setup.sh` loads the Python module, creates/activates `.venv` and installs JuMACS with the test extra; re-run it with `source scripts/python_setup.sh --update` to refresh pip, JuMACS and dependencies.
 
-The installed command is `jumacs` (editable install from the setup script); `python3 -m jumacs.cli` also works with manually loaded modules and `PYTHONPATH="$PWD/src"`. `--model` accepts any registered model name or `all`. The `download` command is plan-only: it prints and saves a size estimate without transfer.
+The installed command is `jumacs` (editable install from the setup script); `python3 -m jumacs.cli` also works with manually loaded modules and `PYTHONPATH="$PWD/src"`. `--model` accepts any registered model name or `all`. The `download` command is plan-only: it prints and saves a size estimate without transfer. `download --model MODEL --all-files` plans a complete-archive mirror instead of the mapped-species window: every file in the model's inventory across all families and members of the configured archive trees, superseded versions deduplicated to the latest release; `download-audit` rebuilds those mirror plans for every available source and writes the audit to `products/comparison/download_plan_summary.csv`/`.md` (WACCM-X reported separately; unresolved models excluded).
 
 Transfers need general Internet access, which JUWELS **compute nodes do not have**; there is therefore no download wrapper in `scripts/slurm/`. Execute a reviewed plan only where Internet egress works: on **JUDAC** (`python3 scripts/judac_download.py --model MODEL --execute`, auto-discovers manifests in `products/manifests/`; preferred for bulk transfer) or on a **JUWELS login node** (`jumacs download --model MODEL --execute` or `make download-execute MODEL=...`). Login-node transfers are for small selections only; keep bulk work on JUDAC and mount the shared tree over SSHFS (`~/jumount`) when copying from JUDAC. Heavy processing still runs through Slurm, not on the login node, and Slurm jobs must not fetch data at run time:
 

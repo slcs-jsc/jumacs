@@ -12,6 +12,7 @@ model:
   archive_model: CESM2-WACCM
   experiment: refD1
   dataset_uuid: 02b333743ab14d0fa95894b00ccca3cf
+  dataset_uuid_scope: collection
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NCAR/CESM2-WACCM/refD1/r1i1p1f1
 capabilities:
   archive_inventory: true

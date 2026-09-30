@@ -6,10 +6,10 @@ from .climatology import build_climatology
 from .comparison import compare_period
 from .config import load_config
 from .diagnostics import quicklooks, trend_plots, validate
-from .download import download, plan
+from .download import download, full_plan, plan
 from .zonal import build_zonal
 from .coverage import coverage_model, coverage_matrix, coverage_plot
-from .config import model_names, reference_period, models_with_capability, model_period, is_waccmx
+from .config import model_names, reference_period, models_with_capability, model_period, is_waccmx, ready_ccmi_model_names
 from .evaluation import evaluate_fields
 from .comparison import _pressure
 from .compact import build_compact
@@ -35,6 +35,7 @@ def main(argv=None):
             p.add_argument("--variable", action="append")
         if command == "download":
             p.add_argument("--execute", action="store_true", help="Transfer selected files after showing and saving the plan")
+            p.add_argument("--all-files", action="store_true", help="Plan a complete mirror of the configured archive member (all inventoried files, families and months)")
     compare = sub.add_parser("compare")
     compare.add_argument("--models", nargs=2, type=_model_type, default=["GEOSCCM", "EMAC"])
     compare.add_argument("--start-year", type=int)
@@ -57,10 +58,19 @@ def main(argv=None):
     compact.add_argument("--transition-end", type=float, default=65)
     compact.add_argument("--variable", action="append")
     sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
+    sub.add_parser("download-audit", help="Rebuild complete-archive download plans for every available source and write the mirror-plan audit (offline, no transfer)")
     args = parser.parse_args(argv)
     if args.command == "summary":
         from .summary import write_summaries
         for path in write_summaries():
+            print(path)
+        return
+    if args.command == "download-audit":
+        from .audit import write_download_plan_summary, audit_row
+        for model in (*ready_ccmi_model_names(), "WACCM-X"):
+            row = audit_row(model)
+            print(json.dumps(row, indent=2))
+        for path in write_download_plan_summary():
             print(path)
         return
     reference = reference_period()["reference_period"]
@@ -102,19 +112,27 @@ def main(argv=None):
         print(f"{model}: skipped; archive identifiers unresolved in config/models/{model}.yaml")
     models = tuple(m for m in models if m not in unresolved)
     if args.command == "download":
+        if args.all_files and (args.start_year or args.end_year or args.variable):
+            parser.error("--all-files plans the complete configured member and cannot be combined with --start-year/--end-year/--variable")
         plans = []
         for model in models:
-            period = model_period(model)
-            start = args.start_year or period["start_year"]
-            end = args.end_year or period["end_year"]
             try:
-                payload = plan(model, start, end, args.variable)
+                if args.all_files:
+                    payload = full_plan(model)
+                else:
+                    period = model_period(model)
+                    start = args.start_year or period["start_year"]
+                    end = args.end_year or period["end_year"]
+                    payload = plan(model, start, end, args.variable)
             except FileNotFoundError as exc:
                 print(f"{model}: skipped; {exc}")
                 continue
             plans.append(payload)
             print(json.dumps({key: value for key, value in payload.items() if key != "files"} | {"file_count": len(payload["files"])}, indent=2))
         print(f"Combined selected size estimate: {sum(p['selected_bytes_estimate'] for p in plans):,} bytes")
+        if args.all_files:
+            print(f"Combined pending: {sum(p.get('pending_file_count', 0) for p in plans)} files, "
+                  f"{sum(p.get('pending_bytes', 0) for p in plans):,} bytes")
         if args.execute:
             for payload in plans:
                 download(payload)
