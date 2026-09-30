@@ -1,18 +1,21 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: refD1 data produced by the UKESM1-StratTrop model
+# at NCAS-CAMBRIDGE" (contact A. Abraham/A. Keeble, published 2023, OGL v3). Members use f2 (r1i1p1f2, r2i1p1f2, r3i1p1f2);
+# this registry pins r1i1p1f2. Monthly file timestamps use YYYYMMDD-YYYYMMDD rather than the usual YYYYMM-YYYYMM.
 model:
   name: UKESM1-StratTrop
   display_name: UKESM1-StratTrop
-  institution: unresolved
+  institution: NCAS-CAMBRIDGE
   source_id: UKESM1-StratTrop
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: ukesm1_strattrop_refd1
-  archive_model: unresolved
+  archive_model: UKESM1-StratTrop
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: 2b93a4655e2645a898466c4ea9257c0e
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NCAS-CAMBRIDGE/UKESM1-StratTrop/refD1/r1i1p1f2
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

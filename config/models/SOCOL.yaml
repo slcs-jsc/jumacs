@@ -1,18 +1,22 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: refD1 data produced by the SOCOL model at ETH-PMOD"
+# (contact E. Rozanov, published 2024-11-11, OGL v3). Non-standard layout: member directories are gn (contains Amon) and
+# gnz (contains AmonZ), and the grid subdirectory below each variable is r1i1p1f1. archive_base lists both member
+# directories (whitespace-separated) so inventory scans find Amon and AmonZ.
 model:
   name: SOCOL
   display_name: SOCOL
-  institution: unresolved
+  institution: ETH-PMOD
   source_id: SOCOL
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: socol_refd1
-  archive_model: unresolved
+  archive_model: SOCOL
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: f088e7a33a25409197ea9b6aa3b90864
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ETH-PMOD/SOCOL/refD1/gn https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ETH-PMOD/SOCOL/refD1/gnz
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

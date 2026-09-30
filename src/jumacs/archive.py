@@ -13,7 +13,7 @@ import requests
 from .config import ROOT, load_config, model_names, is_waccmx, species_registry
 
 FAMILIES = ("Amon", "AmonZ")
-FILE_RE = re.compile(r"_(\d{6})-(\d{6})\.nc$")
+FILE_RE = re.compile(r"_(\d{6}|\d{8})-(\d{6}|\d{8})\.nc$")
 TARGETS = [entry["canonical"] for entry in species_registry()]
 CATALOGUE = "https://catalogue.ceda.ac.uk/uuid/{}/"
 
@@ -67,7 +67,7 @@ def _leaf(task):
     family, variable, base = task
     files = []
     for grid, grid_url, _ in _entries(base):
-        if not grid.startswith("g"):
+        if not (grid.startswith("g") or re.fullmatch(r"r\d+i\d+p\d+f\d+", grid)):
             continue
         for version, version_url, _ in _entries(grid_url):
             if not version.startswith("v"):
@@ -109,12 +109,18 @@ def inspect_model(model, workers=12):
         (root / "archive_inventory.json").write_text(json.dumps(payload, indent=2))
         (root / "summary.json").write_text(json.dumps(payload, indent=2))
         return payload
-    base = config["model"]["archive_base"].rstrip("/")
+    raw_base = config["model"]["archive_base"].strip()
+    bases = [b.rstrip("/") for b in raw_base.split()]
     tasks = []
-    for family in FAMILIES:
-        for variable, url, _ in _entries(base + "/" + family + "/"):
-            if re.fullmatch(r"[a-z][a-z0-9]*", variable):
-                tasks.append((family, variable, url))
+    for base in bases:
+        for family in FAMILIES:
+            try:
+                listing = _entries(base + "/" + family + "/")
+            except requests.RequestException:
+                continue
+            for variable, url, _ in listing:
+                if re.fullmatch(r"[a-z][a-z0-9]*", variable):
+                    tasks.append((family, variable, url))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         groups = list(pool.map(_leaf, tasks))
     files = sorted((item for group in groups for item in group), key=lambda x: (x["family"], x["variable"], x["start"]))
@@ -139,14 +145,14 @@ def inspect_model(model, workers=12):
     root = ROOT / "products/diagnostics" / "inspection" / model
     root.mkdir(parents=True, exist_ok=True)
     inventory = {"model": model, "experiment": "refD1", "dataset_uuid": config["model"]["dataset_uuid"],
-                 "archive_base": base, "inspected_utc": datetime.now(timezone.utc).isoformat(),
+                 "archive_base": raw_base, "inspected_utc": datetime.now(timezone.utc).isoformat(),
                  "files": files, "catalogue_metadata": metadata}
     (root / "archive_inventory.json").write_text(json.dumps(inventory, indent=2))
     with (root / "variables.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(variables[0]) if variables else ["variable"])
         writer.writeheader(); writer.writerows(variables)
     summary = {"model": model, "dataset_uuid": config["model"]["dataset_uuid"],
-               "archive_base": base, "monthly_families": list(FAMILIES), "file_count": len(files),
+               "archive_base": raw_base, "monthly_families": list(FAMILIES), "file_count": len(files),
                "listed_size_bytes": sum(f["size_bytes"] or 0 for f in files),
                "first_month": min((f["start"] for f in files), default=None),
                "last_month": max((f["end"] for f in files), default=None),

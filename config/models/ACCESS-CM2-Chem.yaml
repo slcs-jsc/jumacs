@@ -1,18 +1,20 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: REF-D1 data produced by the ACCESS-CM2-Chem model"
+# (contact F. Dennison, published 2022-06-07, OGL v3). Additional members r2i1p1f1, r3i1p1f1 exist; this registry pins r1i1p1f1.
 model:
   name: ACCESS-CM2-Chem
   display_name: ACCESS-CM2-Chem
-  institution: unresolved
+  institution: CSIRO
   source_id: ACCESS-CM2-Chem
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: access_cm2_chem_refd1
-  archive_model: unresolved
+  archive_model: ACCESS-CM2-Chem
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: 031313dc6bfc4a0baabd58a51629bc21
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/CSIRO/ACCESS-CM2-Chem/refD1/r1i1p1f1
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

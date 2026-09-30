@@ -1,3 +1,6 @@
+# Checked live 2026-09-30 against CEDA: MIROC/MIROC-ES2H has no refD1 contribution in the archive or the catalogue
+# (collection a918c09740b345a089fd47c4c48526b4 publishes refD2, senD2-fix and senD2-sai only).
+# Kept unresolved deliberately: there is no refD1 dataset_uuid or archive path to register. Do not guess one.
 model:
   name: MIROC-ES2H
   display_name: MIROC-ES2H

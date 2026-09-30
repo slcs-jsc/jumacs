@@ -1,18 +1,21 @@
+# Verified live 2026-09-30 against CEDA: refD1 files exist in the archive (r1-r4i1p1f1, OGL v3, contact N.A. Davis),
+# but no per-experiment refD1 dataset record was published; dataset_uuid is the CCMI-2022 CESM2-WACCM collection
+# record (contact N.A. Davis, published 2024), so catalogue variable metadata may be empty for this model.
 model:
   name: CESM2-WACCM
   display_name: CESM2-WACCM
-  institution: unresolved
+  institution: NCAR
   source_id: CESM2-WACCM
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: cesm2_waccm_refd1
-  archive_model: unresolved
+  archive_model: CESM2-WACCM
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: 02b333743ab14d0fa95894b00ccca3cf
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NCAR/CESM2-WACCM/refD1/r1i1p1f1
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

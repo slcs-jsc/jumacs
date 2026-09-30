@@ -1,18 +1,21 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: refD1 data produced by the MIROC3.2 model at NIES"
+# (contact H. Akiyoshi/Y. Yamashita, published 2023, OGL v3). Archive directory is CCSRNIES-MIROC32 (no hyphen after CCSR).
+# Additional members r2i1p1f1, r3i1p1f1 and an fx-only r0i0p0f1 exist; this registry pins r1i1p1f1.
 model:
   name: CCSR-NIES-MIROC32
   display_name: CCSR-NIES-MIROC32
-  institution: unresolved
+  institution: NIES
   source_id: CCSR-NIES-MIROC32
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: ccsr_nies_miroc32_refd1
-  archive_model: unresolved
+  archive_model: CCSR-NIES-MIROC32
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: 4262e08336404147878b3adeb4e68950
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NIES/CCSRNIES-MIROC32/refD1/r1i1p1f1
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

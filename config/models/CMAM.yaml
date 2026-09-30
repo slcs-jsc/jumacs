@@ -1,18 +1,20 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: refD1 data produced by the CMAM model at ECCC"
+# (contact D. Plummer, published 2023-04-05, OGL v3). Additional members r2-r5i1p1f1 exist; this registry pins r1i1p1f1.
 model:
   name: CMAM
   display_name: CMAM
-  institution: unresolved
+  institution: ECCC
   source_id: CMAM
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: cmam_refd1
-  archive_model: unresolved
+  archive_model: CMAM
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: 3f06d743521f44a5ba8e666e11f66d6b
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ECCC/CMAM/refD1/r1i1p1f1
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false

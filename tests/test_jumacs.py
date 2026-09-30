@@ -161,10 +161,15 @@ def test_capabilities_gate_commands():
     from jumacs.config import models_with_capability, has_capability
     assert set(models_with_capability("compact_waccmx")) == {"GEOSCCM", "EMAC"}
     assert has_capability("WACCM-X", "zonal_processing") and not has_capability("WACCM-X", "compact_waccmx")
-    assert set(models_with_capability("archive_inventory")) == {"GEOSCCM", "EMAC", "WACCM-X"}
-    for stub in ("SOCOL", "CMAM", "MIROC-ES2H"):
-        assert not any(has_capability(stub, cap) for cap in
-                       ("archive_inventory", "download", "zonal_processing", "climatology", "compact_waccmx"))
+    assert set(models_with_capability("archive_inventory")) == {
+        "GEOSCCM", "EMAC", "WACCM-X", "ACCESS-CM2-Chem", "CCSR-NIES-MIROC32", "CESM2-WACCM", "CMAM",
+        "CNRM-MOCAGE", "IPSL-CM6A-ATM-LR-REPROBUS", "NIWA-UKCA2", "SOCOL", "UKESM1-StratTrop"}
+    assert set(models_with_capability("zonal_processing")) == {"GEOSCCM", "EMAC", "WACCM-X"}
+    assert not any(has_capability("MIROC-ES2H", cap) for cap in
+                   ("archive_inventory", "download", "zonal_processing", "climatology", "compact_waccmx"))
+    for stub in ("SOCOL", "CMAM"):
+        assert has_capability(stub, "archive_inventory") and has_capability(stub, "download")
+        assert not any(has_capability(stub, cap) for cap in ("zonal_processing", "climatology", "compact_waccmx"))
 
 
 def test_compact_rejects_models_without_capability():
@@ -252,7 +257,8 @@ def test_registry_kinds_and_statuses():
     waccmx = model_metadata("WACCM-X")
     assert waccmx["kind"] == "whole_atmosphere" and waccmx["slug"] == "waccmx"
     unresolved = [name for name in ccmi_model_names() if model_metadata(name)["status"] == "unresolved"]
-    assert unresolved and all(model_metadata(name)["institution"] == "unresolved" for name in unresolved)
+    assert set(unresolved) == {"MIROC-ES2H"}
+    assert all(model_metadata(name)["institution"] == "unresolved" for name in unresolved)
     canonical = {entry["canonical"] for entry in species_registry()}
     assert {"O3", "CFC-11", "SF6", "Cly", "Bry", "NOy"} <= canonical
 

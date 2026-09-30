@@ -1,18 +1,20 @@
+# Verified live 2026-09-30 against CEDA: dataset record "CCMI-2022: refD1 data produced by the CNRM-MOCAGE model at CNRM-CERFACS"
+# (contact B. Josse, published 2024-11-11, OGL v3). Additional members f2, f3 and r1i1p2f1 exist; this registry pins r1i1p1f1.
 model:
   name: CNRM-MOCAGE
   display_name: CNRM-MOCAGE
-  institution: unresolved
+  institution: CNRM-CERFACS
   source_id: CNRM-MOCAGE
   kind: ccmi
-  status: unresolved
+  status: ready
   slug: cnrm_mocage_refd1
-  archive_model: unresolved
+  archive_model: CNRM-MOCAGE
   experiment: refD1
-  dataset_uuid: unresolved
-  archive_base: unresolved
+  dataset_uuid: a29e20e863394bbd8a32470ebc8fa04b
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/CNRM-CERFACS/CNRM-MOCAGE/refD1/r1i1p1f1
 capabilities:
-  archive_inventory: false
-  download: false
+  archive_inventory: true
+  download: true
   zonal_processing: false
   climatology: false
   compact_waccmx: false
