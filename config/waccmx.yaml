@@ -1,0 +1,24 @@
+model:
+  name: WACCM-X
+  archive_model: WACCM-X
+  experiment: transient-1950-2015
+  dataset_uuid: dc91f5e39ae34fd883af81dfdbaf659c
+  archive_base: https://data.ceda.ac.uk/badc/deposited2020/WACCM-X_1950-2015/data
+  source_kind: monthly_zonal_multivariable
+period: {start_year: 1985, end_year: 2014}
+paths: {raw: data/raw/WACCM-X/transient-1950-2015, zonal: data/processed/WACCM-X/transient-1950-2015, climatology: products/climatology/WACCM-X}
+coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: PS, pressure: lev, hybrid_a: hyam, hybrid_b: hybm, reference_pressure: P0}
+variables:
+  O3: O3
+  CO2: CO2
+  CH4: CH4
+  'NO': 'NO'
+  CFC-11: CFC11
+  CFC-12: CFC12
+  NOy: NOY
+  temperature: T
+  surface_pressure: PS
+  geopotential_height: Z3
+  O: O
+  O2: O2
+  N2: N2_vmr

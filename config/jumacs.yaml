@@ -1,0 +1,12 @@
+paths:
+  raw: data/raw
+  processed: data/processed
+  products: products
+  site: site
+  cache: cache
+  tmp: tmp
+
+reference_period:
+  start_year: 1985
+  end_year: 2014
+  nominal_reference_year: 2000

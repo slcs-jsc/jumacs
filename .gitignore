@@ -1,0 +1,27 @@
+# Raw and processed model data
+data/raw/**
+data/processed/**
+
+# Generated scientific products and website
+products/**
+site/**
+
+# Cache and temporary files
+cache/**
+tmp/**
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Job logs and editor/OS files
+slurm-*.out
+slurm-*.err
+.DS_Store
+*~

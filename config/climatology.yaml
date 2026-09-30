@@ -1,0 +1,7 @@
+reference_period:
+  start_year: 1985
+  end_year: 2014
+  nominal_reference_year: 2000
+  meaning: 30-year monthly zonal reference climatology
+  bias_correction: none
+  trend_correction: none

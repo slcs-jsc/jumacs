@@ -1,0 +1,76 @@
+model:
+  name: GEOSCCM
+  archive_model: GEOSCCM
+  experiment: refD1
+  dataset_uuid: 0689a7f2e0964a7b89e395ee68d7eee5
+  archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NASA-GSFC/GEOSCCM/refD1/r1i1p1f1
+period: {start_year: 1985, end_year: 2014}
+paths: {raw: data/raw/GEOSCCM/refD1, zonal: data/processed/GEOSCCM/refD1, climatology: products/climatology/GEOSCCM}
+coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: ps, pressure: lev, hybrid_a: a, hybrid_b: b, reference_pressure: p0}
+variables:
+  O3: o3
+  H2O: h2o
+  CH4: ch4
+  C2H6: c2h6
+  N2O: n2o
+  CO: co
+  HNO3: hno3
+  'NO': 'no'
+  NO2: no2
+  HCl: hcl
+  ClO: clo
+  ClONO2: clono2
+  BrO: bro
+  CFC-11: cfcl3
+  CFC-12: cf2cl2
+  HCFC-22: chclf2
+  HCFC-141b: ch3ccl2f
+  HCFC-142b: ch3cclf2
+  Halon-1211: cbrclf2
+  Halon-1301: cbrf3
+  Halon-2402: c2br2f4
+  CH3Br: ch3br
+  CH3Cl: ch3cl
+  CCl4: ccl4
+  CH3CCl3: ch3ccl3
+  Cly: cly
+  Bry: bry
+  NOy: noy
+  temperature: ta
+  surface_pressure: ps
+  geopotential_height: zg
+  Br: br
+  BrCl: brcl
+  BrONO2: brono2
+  CH2O: ch2o
+  CH3OOH: ch3ooh
+  Cl2O2: cl2o2
+  COS: cos
+  H2: h2
+  H2O2: h2o2
+  HBr: hbr
+  HNO4: hno4
+  HO2: ho2
+  HOBr: hobr
+  HOCl: hocl
+  mean_age: meanage
+  N: n
+  N2O5: n2o5
+  OClO: oclo
+  OH: oh
+  O3_strat: o3strat
+  SO2: so2
+  PSC_ice_SAD: sadice
+  PSC_NAT_SAD: sadnat
+  sulfate_SAD: sadsulf
+  tropopause_pressure: ptp
+  tropopause_temperature: tatp
+  total_ozone_column: toz
+  tropospheric_ozone_column: tropoz
+  zonal_wind: ua
+  meridional_wind: va
+  TEM_meridional_wind: vtem
+  TEM_vertical_velocity: wtem
+  EP_flux_meridional: epfy
+  EP_flux_vertical: epfz
+preferred_families: {meanage: AmonZ, oh: AmonZ, o3strat: AmonZ, ua: AmonZ, va: AmonZ}

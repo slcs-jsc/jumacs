@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JuMACS · Monthly climatology atlas</title>
+  <style>
+    :root { color-scheme: light; --ink:#183349; --muted:#617686; --line:#dce7ec; --paper:#f5f9fa; --accent:#087f89; }
+    * { box-sizing:border-box }
+    body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif }
+    header { background:#12364b; color:white; padding:1.2rem max(1.5rem,calc((100vw - 1420px)/2)) }
+    header h1 { margin:0; font-size:1.6rem; letter-spacing:-.025em }
+    header p { margin:.3rem 0 0; color:#cee2e9; font-size:.92rem }
+    main { max-width:1420px; min-height:calc(100vh - 98px); margin:auto; display:grid; grid-template-columns:280px minmax(0,1fr) }
+    aside { background:white; border-right:1px solid var(--line); padding:1.2rem }
+    label { display:block; margin:.75rem 0 .3rem; color:var(--muted); font-size:.78rem; font-weight:750; letter-spacing:.04em; text-transform:uppercase }
+    select,input { width:100%; border:1px solid #b8cbd4; border-radius:.5rem; background:white; padding:.65rem .75rem; color:var(--ink); font:inherit }
+    #variables { display:grid; gap:.2rem; max-height:calc(100vh - 290px); overflow:auto; margin-top:.7rem }
+    .item { border:0; border-radius:.5rem; background:transparent; color:var(--ink); cursor:pointer; font:inherit; padding:.5rem .65rem; text-align:left }
+    .item:hover { background:#edf6f7 }
+    .item.active { background:#dff0f1; color:#075e65; font-weight:700 }
+    .viewer { min-width:0; padding:1.35rem 1.6rem 2rem }
+    .topline { display:flex; justify-content:space-between; align-items:start; gap:1rem; flex-wrap:wrap }
+    h2 { margin:0; font-size:1.5rem }
+    .meta { color:var(--muted); font-size:.9rem; margin:.2rem 0 0 }
+    .controls { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem }
+    button.tab,button.navbtn,a.download { border:1px solid #bfcfd6; border-radius:.48rem; background:white; padding:.55rem .8rem; color:var(--ink); font:inherit; cursor:pointer; text-decoration:none }
+    button.tab.active { background:var(--accent); border-color:var(--accent); color:white }
+    button.tab:disabled { opacity:.4; cursor:not-allowed }
+    button:hover:not(:disabled),a.download:hover { border-color:var(--accent) }
+    .tabs { margin-top:1.2rem }
+    figure { background:white; border:1px solid var(--line); border-radius:.8rem; margin:1rem 0 .6rem; padding:.65rem; box-shadow:0 8px 28px #12364b0a }
+    figure img { display:block; width:100%; max-height:calc(100vh - 220px); object-fit:contain }
+    figcaption { display:flex; justify-content:space-between; align-items:center; gap:1rem; color:var(--muted); font-size:.88rem; margin-top:.7rem }
+    .note { background:#e9f4f5; border-left:3px solid var(--accent); padding:.65rem .9rem; margin-top:1.3rem; color:#335c69; font-size:.88rem }
+    @media(max-width:760px) { main{display:block} aside{border-right:0;border-bottom:1px solid var(--line)} #variables{display:flex;max-height:none;overflow:auto} .item{white-space:nowrap} .viewer{padding:1rem} figure img{max-height:none} }
+  </style>
+</head>
+<body>
+  <header><h1>JuMACS monthly climatology atlas</h1><p>GEOSCCM and EMAC refD1 · WACCM-X upper-atmosphere source · 1985–2014</p></header>
+  <main>
+    <aside>
+      <label for="model">Model</label><select id="model"><option>GEOSCCM</option><option>EMAC</option><option>WACCM-X</option><option>GEOSCCM→WACCM-X</option><option>EMAC→WACCM-X</option><option>Comparison</option></select>
+      <label for="search">Variable</label><input id="search" type="search" placeholder="Search gas or variable name">
+      <div id="variables" aria-label="Available variables"></div>
+    </aside>
+    <section class="viewer">
+      <div class="topline"><div><h2 id="title"></h2><p class="meta" id="meta"></p></div><div class="controls"><button class="navbtn" id="prev" title="Previous variable">← Previous</button><button class="navbtn" id="next" title="Next variable">Next →</button></div></div>
+      <div class="controls tabs"><button class="tab active" data-view="timeline">Monthly time series</button><button class="tab" data-view="sections">Latitude–pressure sections</button><button class="tab" data-view="upper">WACCM-X upper atmosphere</button><button class="tab" data-view="compact">Compact height grid</button><button class="tab" data-view="comparison">Model difference</button><button class="tab" data-view="coverage">Vertical coverage</button></div>
+      <figure><img id="plot" alt=""><figcaption><span id="caption"></span><a class="download" id="download" download>Download PNG</a></figcaption></figure>
+      <p class="note">Time series: monthly zonal means at 300 and 30 hPa for 20°S–20°N and 45–75°N. Sections: January, April, July and October averaged over 1985–2014. The upper-atmosphere view shows WACCM-X above 1 hPa. Each colour scale is labelled separately. Full monthly NetCDF series remain on the HPC system. No trend correction or GEOSCCM–EMAC averaging. Comparison plots show differences on the common latitude–pressure domain. __JUMACS_DATA_LINKS__</p>
+    </section>
+  </main>
+  <script id="catalog" type="application/json">__JUMACS_CATALOG__</script>
+  <script>
+    const catalog = JSON.parse(document.getElementById('catalog').textContent);
+    const model = document.getElementById('model');
+    const search = document.getElementById('search');
+    const list = document.getElementById('variables');
+    let current = null, view = 'timeline';
+    function available() { return catalog.filter(r => r.model === model.value && (r.label + ' ' + r.variable).toLowerCase().includes(search.value.toLowerCase())); }
+    function render() {
+      const rows = available();
+      if (!rows.includes(current)) current = rows[0] || null;
+      list.replaceChildren();
+      for (const r of rows) {
+        const button = document.createElement('button');
+        button.className = 'item' + (r === current ? ' active' : '');
+        button.textContent = r.label.toLowerCase() === r.variable.toLowerCase() ? r.label : r.label + ' · ' + r.variable;
+        button.onclick = () => { current = r; render(); };
+        list.append(button);
+      }
+      if (!current) {
+        document.getElementById('title').textContent = 'No matching variable';
+        document.getElementById('plot').removeAttribute('src');
+        return;
+      }
+      if (!current.views[view]) view = Object.keys(current.views)[0];
+      document.getElementById('title').textContent = current.model + ' · ' + current.label;
+      document.getElementById('meta').textContent = current.variable + ' · ' + current.units + ' · ' + current.months + ' months · ' + current.first_year + '–' + current.last_year;
+      const img = document.getElementById('plot');
+      img.src = current.views[view];
+      img.alt = current.model + ' ' + current.label + (view === 'timeline' ? ' monthly time series' : ' latitude–pressure sections for January, April, July and October');
+      document.getElementById('download').href = img.src;
+      document.getElementById('caption').textContent = view === 'timeline' ? 'Full monthly series' : view === 'upper' ? 'WACCM-X upper atmosphere · 1985–2014' : view === 'compact' ? '0–120 km · transition at 55–65 km · 1985–2014' : view === 'comparison' ? 'Model A minus model B · 1985–2014' : view === 'coverage' ? 'Highest level with finite values' : 'Monthly climatology 1985–2014';
+      for (const tab of document.querySelectorAll('.tab')) {
+        tab.disabled = !current.views[tab.dataset.view];
+        tab.classList.toggle('active', tab.dataset.view === view);
+      }
+    }
+    model.onchange = () => { current = null; render(); };
+    search.oninput = () => { current = null; render(); };
+    for (const tab of document.querySelectorAll('.tab')) tab.onclick = () => { view = tab.dataset.view; render(); };
+    function move(step) { const rows = available(), i = rows.indexOf(current); if (rows.length) { current = rows[(i + step + rows.length) % rows.length]; render(); } }
+    document.getElementById('prev').onclick = () => move(-1);
+    document.getElementById('next').onclick = () => move(1);
+    document.onkeydown = e => { if (e.target.matches('input,select')) return; if (e.key === 'ArrowLeft') move(-1); if (e.key === 'ArrowRight') move(1); };
+    render();
+  </script>
+</body>
+</html>
