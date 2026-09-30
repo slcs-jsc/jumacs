@@ -124,6 +124,9 @@ def inspect_model(model, workers=12):
     with ThreadPoolExecutor(max_workers=workers) as pool:
         groups = list(pool.map(_leaf, tasks))
     files = sorted((item for group in groups for item in group), key=lambda x: (x["family"], x["variable"], x["start"]))
+    all_members = sorted({m for m in map(member_of, files) if m})
+    selected_member = config["model"].get("member")
+    files = filter_selected_member(config, files)
     metadata = catalogue_variables(config["model"]["dataset_uuid"])
     representatives = {}
     for item in files:
@@ -147,6 +150,9 @@ def inspect_model(model, workers=12):
     inventory = {"model": model, "experiment": "refD1", "dataset_uuid": config["model"]["dataset_uuid"],
                  "archive_base": raw_base, "inspected_utc": datetime.now(timezone.utc).isoformat(),
                  "files": files, "catalogue_metadata": metadata}
+    if selected_member:
+        inventory["member"] = selected_member
+        inventory["members_in_archive"] = all_members
     (root / "archive_inventory.json").write_text(json.dumps(inventory, indent=2))
     with (root / "variables.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(variables[0]) if variables else ["variable"])
@@ -213,11 +219,31 @@ def inspect_waccmx(config):
     return summary
 
 
+MEMBER_RE = re.compile(r"r\d+i\d+p\d+f\d+")
+
+
+def member_of(entry):
+    if MEMBER_RE.fullmatch(entry.get("grid") or ""):
+        return entry["grid"]
+    match = MEMBER_RE.search(entry.get("filename") or "")
+    return match.group() if match else None
+
+
+def filter_selected_member(config, files):
+    member = config["model"].get("member")
+    if not member:
+        return list(files)
+    return [f for f in files if member_of(f) in (None, member)]
+
+
 def load_inventory(model):
     path = ROOT / "products/diagnostics" / "inspection" / model / "archive_inventory.json"
     if not path.exists():
         raise FileNotFoundError(f"Run inspect --model {model} first: {path}")
-    return json.loads(path.read_text())
+    inventory = json.loads(path.read_text())
+    if inventory.get("files"):
+        inventory["files"] = filter_selected_member(load_config(model), inventory["files"])
+    return inventory
 
 
 def discovered_zm_variables(model):

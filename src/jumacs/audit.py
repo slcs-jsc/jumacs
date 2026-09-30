@@ -1,8 +1,8 @@
 """Audit complete-archive download plans against the local CEDA inventories (no network access)."""
 import csv
 
-from .archive import load_inventory
-from .config import ROOT, model_metadata, model_names, ready_ccmi_model_names
+from .archive import load_inventory, filter_selected_member
+from .config import ROOT, load_config, model_metadata, model_names, ready_ccmi_model_names
 from .download import full_plan
 
 COMPARISON_SUBDIR = "products/comparison"
@@ -12,7 +12,8 @@ AUDIT_COLUMNS = ["model", "kind", "status", "member", "first_month", "last_month
                  "already_complete_files", "already_complete_bytes", "pending_files", "pending_bytes",
                  "pending_gb", "audit_status", "notes"]
 
-MODEL_NOTES = {"SOCOL": "two configured archive bases (gn + gnz); all inventoried members included",
+MODEL_NOTES = {"SOCOL": "two configured archive bases (gn + gnz); only configured member r1i1p1f1 planned"
+                        " (r2i1p1f1, r3i1p1f1 exist in the archive and are excluded)",
                "UKESM1-StratTrop": "8-digit YYYYMMDD date stamps preserved",
                "CESM2-WACCM": "collection-level dataset_uuid (no per-experiment refD1 record published)",
                "WACCM-X": "monthly zonal multivariable _zm.nc files, kept separate from CCMI totals"}
@@ -24,7 +25,7 @@ def _gb(value):
 
 def audit_row(model):
     payload = full_plan(model)
-    inventory_files = load_inventory(model)["files"]
+    inventory_files = filter_selected_member(load_config(model), load_inventory(model).get("files", []))
     meta = model_metadata(model)
     inventory_count = len(inventory_files)
     inventory_bytes = sum(f["size_bytes"] or 0 for f in inventory_files)

@@ -5,13 +5,14 @@ from pathlib import Path
 import re
 import requests
 
-from .archive import load_inventory
+from .archive import load_inventory, filter_selected_member, member_of
 from .config import ROOT, load_config, is_waccmx, model_slug
 
 
 def select_files(model, start_year, end_year, variables=None):
     config = load_config(model)
     inventory = load_inventory(model)
+    inventory = dict(inventory, files=filter_selected_member(config, inventory.get("files", [])))
     if start_year > end_year:
         raise ValueError("start year exceeds end year")
     if is_waccmx(config):
@@ -42,7 +43,7 @@ def select_files(model, start_year, end_year, variables=None):
     # Keep the latest version so each monthly timestamp enters a product once.
     latest = {}
     for f in selected:
-        key = (f["family"], f["variable"], f.get("grid", ""), f["start"], f["end"])
+        key = (f["family"], f["variable"], member_of(f) or "", f.get("grid", ""), f["start"], f["end"])
         if key not in latest or f.get("version", "") > latest[key].get("version", ""):
             latest[key] = f
     selected = list(latest.values())
@@ -79,12 +80,13 @@ def full_plan(model):
     """Plan a complete mirror of the configured archive member: every inventoried file and family."""
     config = load_config(model)
     inventory = load_inventory(model)
+    inventory = dict(inventory, files=filter_selected_member(config, inventory.get("files", [])))
     files = list(inventory["files"])
     waccmx = is_waccmx(config)
     plannable = [f for f in files if f.get("source_url")]
     latest = {}
     for f in plannable:
-        key = (f["family"], f["filename"]) if waccmx else (f["family"], f["variable"], f.get("grid", ""), f["start"], f["end"])
+        key = (f["family"], f["filename"]) if waccmx else (f["family"], f["variable"], member_of(f) or "", f.get("grid", ""), f["start"], f["end"])
         if key not in latest or f.get("version", "") > latest[key].get("version", ""):
             latest[key] = f
     records = [_record(config, model, latest[key]) for key in sorted(latest)]
@@ -116,6 +118,9 @@ def full_plan(model):
                "size_is_rounded_listing_estimate": True, "files": records}
     if model_config.get("dataset_uuid_scope"):
         payload["dataset_uuid_scope"] = model_config["dataset_uuid_scope"]
+    others = [m for m in inventory.get("members_in_archive", []) if m != model_config.get("member")]
+    if model_config.get("member") and others:
+        payload["members_in_archive_excluded"] = others
     path = manifest_path(model); path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
     return payload

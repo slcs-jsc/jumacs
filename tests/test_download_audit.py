@@ -17,7 +17,8 @@ def _entry(family, variable, filename, grid, version="v20210101", size=100, star
 
 
 def _socol_inventory():
-    return {"model": "SOCOL", "experiment": "refD1", "files": [
+    return {"model": "SOCOL", "experiment": "refD1", "member": "r1i1p1f1",
+            "members_in_archive": ["r1i1p1f1", "r2i1p1f1", "r3i1p1f1"], "files": [
         _entry("Amon", "o3", "o3_Amon_SOCOL_refD1_gn_r1i1p1f1_196001-201812.nc", "gn", url=GN + "/Amon/o3/r1i1p1f1/v20210531/o3_Amon_SOCOL_refD1_gn_r1i1p1f1_196001-201812.nc"),
         _entry("Amon", "o3", "o3_Amon_SOCOL_refD1_gn_r2i1p1f1_196001-201812.nc", "r2i1p1f1", url=GN + "/Amon/o3/r2i1p1f1/v20210531/o3_Amon_SOCOL_refD1_gn_r2i1p1f1_196001-201812.nc"),
         _entry("AmonZ", "clo", "clo_AmonZ_SOCOL_refD1_gnz_r1i1p1f1_196001-201812.nc", "r1i1p1f1", url=GNZ + "/AmonZ/clo/r1i1p1f1/v20210531/clo_AmonZ_SOCOL_refD1_gnz_r1i1p1f1_196001-201812.nc"),
@@ -60,14 +61,16 @@ def test_full_plan_socol_split_archive_bases(patched):
     inventory = _socol_inventory()
     patched({"SOCOL": inventory})
     payload = full_plan("SOCOL")
-    assert payload["planned_file_count"] == 4 == payload["inventory_file_count"]
-    assert payload["planned_bytes"] == payload["inventory_bytes"] == 400
-    assert payload["families"] == {"Amon": {"inventory": 2, "planned": 2}, "AmonZ": {"inventory": 2, "planned": 2}}
+    assert payload["planned_file_count"] == 2 == payload["inventory_file_count"]
+    assert payload["planned_bytes"] == payload["inventory_bytes"] == 200
+    assert payload["families"] == {"Amon": {"inventory": 1, "planned": 1}, "AmonZ": {"inventory": 1, "planned": 1}}
     urls = [r["source_url"] for r in payload["files"]]
-    assert sum(u.startswith(GN + "/") for u in urls) == 2 and sum(u.startswith(GNZ + "/") for u in urls) == 2
+    assert sum(u.startswith(GN + "/") for u in urls) == 1 and sum(u.startswith(GNZ + "/") for u in urls) == 1
     paths = [r["local_path"] for r in payload["files"]]
-    assert len(set(paths)) == 4
-    assert payload["member"] == "r1i1p1f1,r2i1p1f1,r3i1p1f1"
+    assert len(set(paths)) == 2
+    assert payload["member"] == "r1i1p1f1"
+    assert payload["members_in_archive_excluded"] == ["r2i1p1f1", "r3i1p1f1"]
+    assert not any("r2i1p1f1" in r["filename"] or "r3i1p1f1" in r["filename"] for r in payload["files"])
 
 
 def test_full_plan_ukesm1_keeps_eight_digit_dates_and_all_files(patched):
@@ -157,7 +160,8 @@ def test_download_audit_summary_totals_exclusions_and_determinism(tmp_path, monk
     assert "no audit mismatches" in report
     from jumacs.audit import audit_row
     socol = audit_row("SOCOL")
-    assert socol["audit_status"] == "ok" and socol["planned_files"] == 4
+    assert socol["audit_status"] == "ok" and socol["planned_files"] == 2
+    assert socol["member"] == "r1i1p1f1" and "r2i1p1f1" not in socol["member"]
     assert "gn + gnz" in socol["notes"]
 
 
