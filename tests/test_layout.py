@@ -95,3 +95,37 @@ def test_local_mirror_rejects_missing_hpc_source(tmp_path):
     env["JUMACS_HPC_ROOT"] = str(tmp_path / "missing")
     result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True)
     assert result.returncode == 2 and "Mirror source is missing" in result.stderr
+
+
+def test_download_all_does_not_leak_its_arguments_to_python_setup(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    for name in ("download_all.sh", "python_setup.sh"):
+        shutil.copy2(ROOT / "scripts" / name, checkout / "scripts" / name)
+    venv = checkout / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").write_text('#!/bin/sh\nexec python3 "$@"\n')
+    (venv / "bin" / "python").chmod(0o755)
+    (venv / "bin" / "activate").write_text('export VIRTUAL_ENV="${VIRTUAL_ENV:-$PWD/.venv}"\n')
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        '#!/bin/sh\ncase "$1" in\n'
+        '  -) echo SOCOL ;;\n'
+        '  -m) exit 0 ;;\n'
+        '  --version) echo "Python 3.12 (mock)" ;;\n'
+        '  scripts/archive_download.py) echo "$3: 1 files, 0 pending, ~0.00 GB listed" ;;\n'
+        '  *) exit 9 ;;\nesac\n'
+    )
+    fake_python.chmod(0o755)
+    (fake_bin / "module").write_text("#!/bin/sh\nexit 0\n")
+    (fake_bin / "module").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+    for args in ([], ["--execute"]):
+        result = subprocess.run(["bash", str(checkout / "scripts/download_all.sh")] + args,
+                                env=env, capture_output=True, text=True, cwd=checkout)
+        assert "Unknown option" not in result.stdout + result.stderr, result.stdout + result.stderr
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "All download-capable JuMACS sources are complete." in result.stdout

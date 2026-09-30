@@ -34,8 +34,10 @@ case "${1:-}" in
 esac
 
 # Set up the JUWELS Python environment in this script's shell.
+# The empty argument prevents this script's own --execute from being inherited
+# as python_setup.sh's $1 (sourced scripts inherit caller positional parameters).
 # shellcheck disable=SC1091
-source scripts/python_setup.sh || exit 1
+source scripts/python_setup.sh "" || exit 1
 
 mapfile -t MODELS < <(
     python - <<'PY'
