@@ -1,6 +1,6 @@
 model:
   name: GEOSCCM
-  display_name: NASA GISS GEOSCCM
+  display_name: GEOSCCM
   institution: NASA-GSFC
   source_id: GEOSCCM
   kind: ccmi

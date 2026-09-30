@@ -1,6 +1,6 @@
 # Canonical target species for the CCMI-2022 coverage matrices.
 # Canonical names match the keys of each model config's variables mapping.
-# unresolved: true marks species that no inspected source currently provides.
+# Availability is derived dynamically from model inventories and mappings, never from this file.
 species:
   - {canonical: temperature, group: meteorology}
   - {canonical: surface_pressure, group: meteorology}
@@ -22,7 +22,7 @@ species:
   - {canonical: CO2, group: long_lived}
   - {canonical: CH4, group: long_lived}
   - {canonical: N2O, group: long_lived}
-  - {canonical: SF6, group: long_lived, unresolved: true}
+  - {canonical: SF6, group: long_lived}
   - {canonical: CO, group: chemistry}
   - {canonical: H2, group: chemistry}
   - {canonical: C2H6, group: chemistry}
@@ -32,9 +32,9 @@ species:
   - {canonical: CCl4, group: chlorine_source}
   - {canonical: CFC-11, group: chlorine_source}
   - {canonical: CFC-12, group: chlorine_source}
-  - {canonical: CFC-113, group: chlorine_source, unresolved: true}
-  - {canonical: CFC-114, group: chlorine_source, unresolved: true}
-  - {canonical: CFC-115, group: chlorine_source, unresolved: true}
+  - {canonical: CFC-113, group: chlorine_source}
+  - {canonical: CFC-114, group: chlorine_source}
+  - {canonical: CFC-115, group: chlorine_source}
   - {canonical: HCFC-22, group: chlorine_source}
   - {canonical: HCFC-141b, group: chlorine_source}
   - {canonical: HCFC-142b, group: chlorine_source}
