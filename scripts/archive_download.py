@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Transfer prepared JuMACS manifests on JUDAC with its system Python 3.9.
+"""Transfer prepared JuMACS manifests where Internet egress is available.
 
 Create manifests with `jumacs download` on JUWELS first. This
-transfer helper deliberately needs only requests from JUDAC's base Python.
+transfer helper needs only requests plus the JuMACS registry in src/, so it
+runs on JUDAC's system Python 3.9 as well as on a JUWELS login node.
 """
 import argparse
 import json
 import re
+import sys
 import time
 from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+from jumacs.config import models_with_capability
 
 MANIFEST_KEYS = ("model", "experiment", "files", "selected_bytes_estimate")
 RECORD_KEYS = ("filename", "local_path", "source_url", "download_status")
@@ -98,16 +103,27 @@ def transfer(record):
     record.pop("error", None)
 
 
+def download_models():
+    """Registry-driven accepted models: every source with download capability."""
+    return models_with_capability("download")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", choices=(*download_models(), "all"), default="all")
+    parser.add_argument("--execute", action="store_true", help="Transfer pending files")
+    return parser
+
+
 def main():
     manifests = discover_manifests()
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=(*manifests, "all"), default="all")
-    parser.add_argument("--execute", action="store_true", help="Transfer pending files")
-    args = parser.parse_args()
-    models = tuple(manifests) if args.model == "all" else (args.model,)
+    args = build_parser().parse_args()
+    models = download_models() if args.model == "all" else (args.model,)
     selected = []
     for model in models:
-        path = manifests[model]
+        path = manifests.get(model)
+        if path is None:
+            raise SystemExit("No manifest for {}; create it first with: jumacs download --model {}".format(model, model))
         manifest = load_manifest(path)
         if manifest["model"] != model:
             raise ValueError("Incorrect manifest: {}".format(path))

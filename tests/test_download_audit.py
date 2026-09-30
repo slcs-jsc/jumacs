@@ -49,7 +49,7 @@ def test_full_plan_selects_every_file_and_dedupes_superseded_versions(patched, m
     assert json.loads(download_module.manifest_path("GEOSCCM").read_text()) == payload
     import importlib.util
     from pathlib import Path
-    spec = importlib.util.spec_from_file_location("judac_download", Path(__file__).resolve().parents[1] / "scripts/judac_download.py")
+    spec = importlib.util.spec_from_file_location("archive_download", Path(__file__).resolve().parents[1] / "scripts/archive_download.py")
     judac = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(judac)
     assert judac.is_manifest(payload)

@@ -201,7 +201,7 @@ def test_download_cli_is_plan_only_without_execute(monkeypatch):
 
 def test_judac_helper_rejects_non_manifest_json(tmp_path):
     import importlib.util
-    spec = importlib.util.spec_from_file_location("judac_download", Path(__file__).resolve().parents[1] / "scripts/judac_download.py")
+    spec = importlib.util.spec_from_file_location("archive_download", Path(__file__).resolve().parents[1] / "scripts/archive_download.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     inventory_like = {"model": "GEOSCCM", "inspected_utc": "x", "files": [{"variable": "o3"}]}
