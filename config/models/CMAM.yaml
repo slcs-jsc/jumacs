@@ -15,7 +15,7 @@ model:
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
+  zonal_processing: true
   climatology: false
   compact_waccmx: false
 paths: {raw: data/raw/CMAM/refD1, zonal: data/processed/CMAM/refD1, climatology: products/climatology/CMAM}

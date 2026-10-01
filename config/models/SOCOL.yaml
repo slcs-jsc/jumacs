@@ -19,7 +19,7 @@ model:
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
+  zonal_processing: true
   climatology: false
   compact_waccmx: false
 paths: {raw: data/raw/SOCOL/refD1, zonal: data/processed/SOCOL/refD1, climatology: products/climatology/SOCOL}
