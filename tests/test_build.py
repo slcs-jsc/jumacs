@@ -58,19 +58,31 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert len(report["skipped"]) == len(missing.calls) == len(configured) - 3
     assert all("no downloaded monthly files" in row["reason"] for row in report["skipped"])
     combined = xr.open_dataset(report["combined_product"])
+    levels = combined["pressure"].values
+    assert len(levels) == 101 and levels[0] == 100000.0
+    covered = levels >= 1000.0
     for name, value in (("ta", 220.0), ("o3", 8e-6), ("h2o", 5e-6)):
-        assert np.allclose(combined[f"{name}_mean"].sel(month=1).values, value)
-        assert combined[f"{name}_n_years"].sel(month=1).min().item() == 30
-        assert report["checks"][name]["finite_fraction"] == 1.0
-        assert report["checks"][name]["n_years_min"] == 30
+        mean = combined[f"{name}_mean"].sel(month=1)
+        assert np.allclose(mean.values[covered], value)
+        assert np.isnan(mean.values[~covered]).all()
+        assert combined[f"{name}_n_years"].sel(month=1).max().item() == 30
+        check = report["checks"][name]
+        assert check["dimensions"] == ["month", "pressure", "lat"]
+        assert check["n_years_max"] == 30 and check["n_years_min"] == 0
+        assert check["values_outside_native_coverage"] == 0
+        assert check["finite_fraction"] == round(covered.mean(), 4)
     assert report["checks"]["ta"]["pressure_plausible"] and report["checks"]["ta"]["pressure_monotonic"]
-    assert report["checks"]["ta"]["dimensions"] == ["month", "ta_lev", "lat"]
-    assert report["checks"]["h2o"]["dimensions"] == ["month", "h2o_lev", "lat"]
+    assert report["vertical_grid"]["level_count"] == len(levels)
     assert combined.attrs["variable_count"] == 3
+    assert combined.attrs["vertical_coordinate"].startswith("pressure")
+    assert combined.attrs["vertical_extrapolation"].startswith("none")
+    assert combined["pressure"].attrs["units"] == "Pa"
+    assert combined["pressure"].attrs["standard_name"] == "air_pressure"
+    assert not [dim for dim in combined.dims if dim.endswith(("_lev", "_plev"))]
     assert combined["o3_mean"].attrs["source_variable"] == "o3"
-    assert combined["o3_air_pressure"].attrs["source_variable"] == "o3"
-    assert combined["o3_air_pressure"].attrs["units"] == "Pa"
-    assert "source_units" not in combined["o3_air_pressure"].attrs
+    assert combined["o3_mean"].attrs["regridded_to_common_pressure_grid"] == "true"
+    assert combined["o3_mean"].attrs["native_level_count"] == 3
+    assert "source_units" not in combined["o3_n_years"].attrs
     combined.close()
 
 

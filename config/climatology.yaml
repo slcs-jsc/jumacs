@@ -5,3 +5,128 @@ reference_period:
   meaning: 30-year monthly zonal reference climatology
   bias_correction: none
   trend_correction: none
+
+# One project-wide pressure coordinate for every climatology product. Monthly
+# zonal fields are regridded onto these levels before the statistics are
+# computed, so all species and models share one vertical axis.
+#
+# The grid is uniform in log10(pressure) with ten levels per decade, so adjacent
+# levels differ by a factor of 10**0.1 (about 1.26). Logarithmic spacing is the
+# appropriate choice because pressure spans ten decades from the surface to the
+# lower thermosphere, and a constant relative spacing keeps the resolution
+# meaningful across that range. At a representative atmospheric scale height of
+# about 7 km the 1.26 pressure ratio corresponds to roughly 1.6 km of vertical
+# spacing, which preserves the vertical structure that JURASSIC radiative
+# transfer/retrieval and MPTRAC transport/chemistry applications need while
+# remaining modest in compute and storage for monthly zonal climatologies. It is
+# a common application grid, not a claim that every atmospheric layer is fully
+# resolved; native structure stays in the model-native zonal intermediates.
+# Extend or coarsen the grid by editing this list only.
+vertical_grid:
+  coordinate: pressure
+  units: Pa
+  interpolation: linear_log_pressure
+  extrapolation: none
+  description: log-uniform grid, ten levels per decade (factor 10**0.1), 1e5 Pa (surface) to 1e-5 Pa (lower thermosphere)
+  levels:
+    - 100000
+    - 79432.8234724
+    - 63095.734448
+    - 50118.7233627
+    - 39810.7170553
+    - 31622.7766017
+    - 25118.8643151
+    - 19952.6231497
+    - 15848.9319246
+    - 12589.2541179
+    - 10000
+    - 7943.28234724
+    - 6309.5734448
+    - 5011.87233627
+    - 3981.07170553
+    - 3162.27766017
+    - 2511.88643151
+    - 1995.26231497
+    - 1584.89319246
+    - 1258.92541179
+    - 1000
+    - 794.328234724
+    - 630.95734448
+    - 501.187233627
+    - 398.107170553
+    - 316.227766017
+    - 251.188643151
+    - 199.526231497
+    - 158.489319246
+    - 125.892541179
+    - 100
+    - 79.4328234724
+    - 63.095734448
+    - 50.1187233627
+    - 39.8107170553
+    - 31.6227766017
+    - 25.1188643151
+    - 19.9526231497
+    - 15.8489319246
+    - 12.5892541179
+    - 10
+    - 7.94328234724
+    - 6.3095734448
+    - 5.01187233627
+    - 3.98107170553
+    - 3.16227766017
+    - 2.51188643151
+    - 1.99526231497
+    - 1.58489319246
+    - 1.25892541179
+    - 1
+    - 0.794328234724
+    - 0.63095734448
+    - 0.501187233627
+    - 0.398107170553
+    - 0.316227766017
+    - 0.251188643151
+    - 0.199526231497
+    - 0.158489319246
+    - 0.125892541179
+    - 0.1
+    - 0.0794328234724
+    - 0.063095734448
+    - 0.0501187233627
+    - 0.0398107170553
+    - 0.0316227766017
+    - 0.0251188643151
+    - 0.0199526231497
+    - 0.0158489319246
+    - 0.0125892541179
+    - 0.01
+    - 0.00794328234724
+    - 0.0063095734448
+    - 0.00501187233627
+    - 0.00398107170553
+    - 0.00316227766017
+    - 0.00251188643151
+    - 0.00199526231497
+    - 0.00158489319246
+    - 0.00125892541179
+    - 0.001
+    - 0.000794328234724
+    - 0.00063095734448
+    - 0.000501187233627
+    - 0.000398107170553
+    - 0.000316227766017
+    - 0.000251188643151
+    - 0.000199526231497
+    - 0.000158489319246
+    - 0.000125892541179
+    - 0.0001
+    - 0.0000794328234724
+    - 0.000063095734448
+    - 0.0000501187233627
+    - 0.0000398107170553
+    - 0.0000316227766017
+    - 0.0000251188643151
+    - 0.0000199526231497
+    - 0.0000158489319246
+    - 0.0000125892541179
+    - 0.00001

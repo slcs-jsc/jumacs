@@ -13,6 +13,8 @@ The repository root is the HPC working directory. Run JuMACS commands there.
 
 `products/release/` is reserved for files explicitly selected for publication. Nothing is copied there automatically.
 
+`config/climatology.yaml` is the single definition of both the reference period and the project-wide common pressure grid (`vertical_grid`: 101 levels in Pa, uniform in `log10(pressure)` with ten levels per decade, `linear_log_pressure`, `extrapolation: none`). Every climatology product is written on that axis as the shared `pressure` coordinate; changing the list and rebuilding is the only way to change it.
+
 ```text
 HPC site/                          ──rsync──> local clone/site/
                                    └─rsync──> web site mirror

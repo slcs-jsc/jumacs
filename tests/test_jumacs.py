@@ -111,9 +111,17 @@ def test_climatology_provenance_and_combined_product(tmp_path, monkeypatch):
         assert root.attrs["model"] == "GEOSCCM"
         assert root.attrs["bias_correction"] == "none"
         assert root.attrs["variables"] == "o3"
-        assert root.o3_n_years.sel(month=1).min().item() == 30
+        assert root.o3_n_years.sel(month=1).max().item() == 30
         assert root.o3_mean.attrs["source_variable"] == "o3"
-        assert set(root.o3_mean.dims) == {"month", "o3_plev", "lat"}
+        assert set(root.o3_mean.dims) == {"month", "pressure", "lat"}
+        assert root.attrs["vertical_coordinate"].startswith("pressure")
+        assert root.attrs["vertical_interpolation"] == "monthly zonal fields regridded linearly in log(pressure) before the statistics"
+        assert root.attrs["vertical_extrapolation"].startswith("none")
+        assert root.o3_mean.attrs["regridded_to_common_pressure_grid"] == "true"
+        above_top = (root.pressure < 10000.).values
+        mean = root.o3_mean.sel(month=1).transpose("pressure", "lat").values
+        assert np.isnan(mean[above_top]).all()
+        assert np.isfinite(mean[~above_top]).all()
 
 
 def test_availability_matrix_keeps_models_separate(tmp_path, monkeypatch):

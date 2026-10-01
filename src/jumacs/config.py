@@ -90,6 +90,29 @@ def reference_period():
     return _load_file(ROOT / "config" / "climatology.yaml")
 
 
+def vertical_grid():
+    """Project-wide pressure coordinate used by every climatology product."""
+    grid = reference_period().get("vertical_grid")
+    if not grid:
+        raise ValueError("config/climatology.yaml needs a vertical_grid section with explicit levels in Pa")
+    if grid.get("units", "Pa") != "Pa":
+        raise ValueError("vertical_grid.units must be Pa")
+    if grid.get("interpolation", "linear_log_pressure") != "linear_log_pressure":
+        raise ValueError("vertical_grid.interpolation must be linear_log_pressure")
+    if grid.get("extrapolation", "none") != "none":
+        raise ValueError("vertical_grid.extrapolation must be none")
+    levels = tuple(float(level) for level in grid.get("levels", ()))
+    if len(levels) < 2:
+        raise ValueError("vertical_grid.levels needs at least two pressure levels")
+    if any(level <= 0 for level in levels):
+        raise ValueError("vertical_grid.levels must all be positive pressures in Pa")
+    if not all(a > b for a, b in zip(levels, levels[1:])) and not all(a < b for a, b in zip(levels, levels[1:])):
+        raise ValueError("vertical_grid.levels must be strictly monotonic")
+    return {"coordinate": grid.get("coordinate", "pressure"), "units": "Pa",
+            "interpolation": "linear_log_pressure", "extrapolation": "none",
+            "description": grid.get("description", ""), "levels": tuple(sorted(levels, reverse=True))}
+
+
 def model_period(model):
     """Per-model processing window; config/climatology.yaml is the single default source."""
     period = load_config(model).get("period")

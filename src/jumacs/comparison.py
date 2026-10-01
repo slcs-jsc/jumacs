@@ -4,33 +4,12 @@ import numpy as np
 import xarray as xr
 
 from .config import ROOT, load_config
+from .vertical import interpolate_log_pressure
 
 
 def compatible_units(first, second):
     aliases = {"mol/mol": "mol mol-1", "mol mol^-1": "mol mol-1"}
     return bool(first and second and aliases.get(first, first) == aliases.get(second, second))
-
-
-def interpolate_log_pressure(field, pressure, target_pa):
-    level = next((d for d in pressure.dims if d in field.dims and d in ("lev", "plev", "pressure")), None)
-    if level is None:
-        raise ValueError("No shared native vertical dimension")
-    targets = np.asarray(target_pa, dtype=float)
-    if np.any(targets <= 0):
-        raise ValueError("Pressure levels must be positive")
-    def one_column(values, p):
-        valid = np.isfinite(values) & np.isfinite(p) & (p > 0)
-        if valid.sum() < 2:
-            return np.full(targets.shape, np.nan)
-        x = np.log(p[valid]); y = values[valid]
-        order = np.argsort(x)
-        x, y = x[order], y[order]
-        return np.interp(np.log(targets), x, y, left=np.nan, right=np.nan)
-    result = xr.apply_ufunc(one_column, field, pressure, input_core_dims=[[level], [level]],
-                            output_core_dims=[["pressure"]], exclude_dims={level} if level == "pressure" else set(),
-                            vectorize=True, dask="allowed",
-                            output_dtypes=[float], dask_gufunc_kwargs={"output_sizes": {"pressure": len(targets)}})
-    return result.assign_coords(pressure=targets)
 
 
 def compare_fields(geos, emac, geos_pressure, emac_pressure, target_pa, labels=("GEOSCCM", "EMAC")):

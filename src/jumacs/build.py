@@ -4,7 +4,7 @@ import xarray as xr
 
 from .archive import discovered_zm_variables
 from .climatology import build_climatology
-from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names
+from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names, vertical_grid
 from .zonal import build_zonal
 
 
@@ -81,11 +81,19 @@ def build_model(model, start_year=None, end_year=None, variables=None):
     report["climatology_products"] = [str(path) for path in outputs[:-1]]
     report["combined_product"] = str(combined_path)
     with xr.open_dataset(combined_path) as combined:
+        coordinate = vertical_grid()["coordinate"]
+        if coordinate in combined.coords:
+            levels = np.asarray(combined[coordinate].values, float)
+            report["vertical_grid"] = {"coordinate": coordinate, "level_count": int(levels.size),
+                                       "pressure_min_pa": round(float(levels.min()), 4),
+                                       "pressure_max_pa": round(float(levels.max()), 4),
+                                       "monotonic": bool(np.all(np.diff(levels) <= 0) or np.all(np.diff(levels) >= 0)),
+                                       "interpolation": "linear_log_pressure", "extrapolation": "none"}
         for name in available:
             report["checks"][name] = check_variable(name, combined)
     lost = [name for name in available if name not in report["checks"]]
     report["variables_in_combined"] = len(report["checks"])
-    report["ok"] = bool(not lost and all(check["present"] for check in report["checks"].values()))
+    report["ok"] = bool(not lost and all(check["ok"] for check in report["checks"].values()))
     if lost:
         report["error"] = f"combined product lacks {', '.join(lost)}: {combined_path}"
     return report
@@ -94,20 +102,41 @@ def build_model(model, start_year=None, end_year=None, variables=None):
 def check_variable(name, combined):
     mean = combined.get(f"{name}_mean")
     if mean is None or f"{name}_n_years" not in combined:
-        return {"present": False}
+        return {"present": False, "ok": False}
+    coordinate = vertical_grid()["coordinate"]
     check = {"present": True, "finite_fraction": round(float(np.isfinite(mean).mean()), 4),
-             "n_years_min": int(combined[f"{name}_n_years"].min()), "dimensions": [str(dim) for dim in mean.dims]}
-    level = next((dim for dim in mean.dims if dim not in ("month", "lat")), None)
-    pressure = combined.get(f"{name}_air_pressure")
-    if pressure is not None and level is not None:
-        profile = np.asarray(pressure.isel({dim: 0 for dim in pressure.dims if dim != level}), float)
-        profile = np.squeeze(profile)
-        profile = profile[np.isfinite(profile)]
-        if profile.size:
-            check["pressure_min_pa"] = round(float(profile.min()), 3)
-            check["pressure_max_pa"] = round(float(profile.max()), 3)
-            check["pressure_monotonic"] = bool(np.all(np.diff(profile) <= 0) or np.all(np.diff(profile) >= 0))
-            check["pressure_plausible"] = bool(profile.max() <= 120000.0 and profile.min() > 0.0)
+             "n_years_min": int(combined[f"{name}_n_years"].min()),
+             "n_years_max": int(combined[f"{name}_n_years"].max()),
+             "dimensions": [str(dim) for dim in mean.dims]}
+    check["ok"] = True
+    if mean.ndim == 3:
+        if coordinate not in mean.dims:
+            check["ok"] = False
+            check["error"] = f"three-dimensional field is not on the common '{coordinate}' grid: {check['dimensions']}"
+            return check
+        pressure = np.asarray(combined[coordinate].values, float)
+        check["pressure_min_pa"] = round(float(pressure.min()), 4)
+        check["pressure_max_pa"] = round(float(pressure.max()), 4)
+        check["pressure_monotonic"] = bool(np.all(np.diff(pressure) <= 0) or np.all(np.diff(pressure) >= 0))
+        check["pressure_plausible"] = bool(pressure.max() <= 120000.0 and pressure.min() > 0.0)
+        check["finite_fraction_on_common_grid"] = check["finite_fraction"]
+        top = mean.attrs.get("native_pressure_min_pa")
+        bottom = mean.attrs.get("native_pressure_max_pa")
+        if top and bottom:
+            oriented = mean.transpose(*[coordinate] + [dim for dim in mean.dims if dim != coordinate])
+            finite_per_level = np.isfinite(oriented.values).sum(axis=tuple(range(1, oriented.ndim)))
+            outside = (pressure < top * 0.999) | (pressure > bottom * 1.001)
+            leak = int(np.sum(finite_per_level[outside]))
+            check["levels_outside_native_coverage"] = int(outside.sum())
+            check["values_outside_native_coverage"] = leak
+            if leak:
+                check["ok"] = False
+                check["error"] = f"{leak} finite values outside the native pressure range {top}-{bottom} Pa"
+        if not check["pressure_plausible"] or not check["pressure_monotonic"]:
+            check["ok"] = False
+            check["error"] = "the common pressure coordinate is not monotonic, positive and plausible"
+    else:
+        check["vertical_treatment"] = "two-dimensional field kept without a vertical dimension"
     if check["finite_fraction"] == 0.0:
         check["warning"] = "no finite values in the monthly mean climatology"
     return check

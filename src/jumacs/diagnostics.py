@@ -75,13 +75,14 @@ def quicklooks(model, start_year, end_year):
                 if month not in ds.month:
                     continue
                 field = ds["mean"].sel(month=month)
-                if "lat" not in field.dims or not any(d in field.dims for d in ("lev", "plev")):
+                if "lat" not in field.dims or not any(d in field.dims for d in ("pressure", "lev", "plev")):
                     continue
-                level = "lev" if "lev" in field.dims else "plev"
+                level = next(d for d in ("pressure", "lev", "plev") if d in field.dims)
                 values = field.transpose(level, "lat").values
                 if "air_pressure" in ds:
                     pressure = ds["air_pressure"].sel(month=month).transpose(level, "lat").values
-                elif field[level].attrs.get("standard_name") == "air_pressure":
+                elif field[level].attrs.get("units", "").lower() in ("pa", "pascal", "pascals") or \
+                        field[level].attrs.get("standard_name") == "air_pressure":
                     pressure = np.broadcast_to(field[level].values[:, None], values.shape)
                 else:
                     continue

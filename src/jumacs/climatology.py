@@ -1,8 +1,13 @@
-"""Period-specific monthly statistics on native model grids."""
+"""Period-specific monthly statistics on one common pressure grid."""
 import numpy as np
 import xarray as xr
 
-from .config import ROOT, load_config, reference_period, is_waccmx, model_slug
+from .config import ROOT, load_config, reference_period, is_waccmx, model_slug, vertical_grid
+from .vertical import native_pressure, regrid_to_common_grid, vertical_dimension
+
+
+class MissingPressureCoordinate(ValueError):
+    """A three-dimensional field has no recoverable native pressure coordinate."""
 
 
 def _slug(model, config):
@@ -43,11 +48,44 @@ def monthly_climatology(data, start_year, end_year):
     return out
 
 
+def on_common_grid(ds, name, start_year, end_year, grid, native_coordinate=""):
+    """Move one native monthly zonal variable onto the common pressure grid.
+
+    Interpolation happens here, before any statistic is taken, because hybrid
+    pressure levels change with time and latitude: averaging first and
+    interpolating the mean afterwards would mix different air masses.
+    Two-dimensional fields (surface and tropopause quantities) are returned
+    unchanged.
+    """
+    field = ds[name]
+    level = vertical_dimension(field)
+    if level is None:
+        return field, {"regridded_to_common_pressure_grid": "false",
+                       "vertical_treatment": "two-dimensional field; no vertical interpolation"}
+    pressure = native_pressure(ds, field)
+    if pressure is None:
+        raise MissingPressureCoordinate(
+            f"{name}: the zonal product has neither an air_pressure variable nor a pressure-valued "
+            f"'{level}' coordinate, so it cannot be placed on the common pressure grid")
+    inside = (ds.time.dt.year >= start_year) & (ds.time.dt.year <= end_year)
+    native = pressure.where(inside, drop=True) if "time" in pressure.dims else pressure
+    regridded = regrid_to_common_grid(field.where(inside, drop=True), native, grid["levels"])
+    provenance = {"regridded_to_common_pressure_grid": "true",
+                  "native_level_dimension": level,
+                  "native_level_count": int(field.sizes[level]),
+                  "native_vertical_coordinate": native_coordinate or level,
+                  "vertical_interpolation": "linear in log(pressure) on every month and latitude",
+                  "vertical_extrapolation": "none; targets outside a profile's finite range are NaN"}
+    finite = native.where(np.isfinite(native) & (native > 0))
+    if finite.size:
+        provenance["native_pressure_min_pa"] = round(float(finite.min()), 4)
+        provenance["native_pressure_max_pa"] = round(float(finite.max()), 4)
+    return regridded, provenance
+
+
 def combined_variables(name, stats):
-    """Name statistics and levels per variable so one file can hold every species."""
-    levels = {dim: f"{name}_{dim}" for dim in stats.dims if dim not in ("month", "lat")}
-    renamed = stats.rename(levels)
-    renamed = renamed.rename({variable: f"{name}_{variable}" for variable in stats.data_vars})
+    """Name statistics per variable; the vertical axis is shared by all species."""
+    renamed = stats.rename({variable: f"{name}_{variable}" for variable in stats.data_vars})
     provenance = dict(stats.attrs)
     for variable in renamed.data_vars:
         carries_units = variable.endswith(("_mean", "_sigma", "_minimum", "_maximum"))
@@ -68,26 +106,42 @@ def write_combined(model, start_year, end_year, names, coverage_bounds=()):
         with xr.open_dataset(source) as stats:
             parts.append(combined_variables(name, stats.load()))
     combined = xr.merge(parts, join="outer", compat="override")
+    grid = vertical_grid()
+    separate_levels = sorted(dim for dim in combined.dims
+                             if dim not in (grid["coordinate"], "month", "lat")
+                             and any(dim in combined[variable].dims for variable in combined.data_vars))
+    if separate_levels:
+        raise RuntimeError(f"Combined climatology kept per-variable vertical dimensions "
+                           f"{separate_levels}; every three-dimensional field must share '{grid['coordinate']}'")
     combined.attrs = {"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"],
         "source_dataset": config["model"]["dataset_uuid"], "source_archive": config["model"]["archive_base"],
         "climatology_period": f"{start_year}-{end_year}", "reference_period_years": end_year-start_year+1,
         "nominal_reference_year": reference["nominal_reference_year"], "bias_correction": "none",
         "trend_correction": "none", "model_combination": "none",
         "variables": " ".join(names), "variable_count": len(names),
-        "variable_naming": "one field per variable and statistic, named <variable>_<statistic> with <variable>_mean, <variable>_sigma, <variable>_minimum, <variable>_maximum, <variable>_n_years and <variable>_air_pressure; level dimensions are named <variable>_<level>",
-        "vertical_coordinate": "native per-variable", "native_units": "see per-variable field attributes",
+        "variable_naming": "one field per variable and statistic, named <variable>_<statistic> with <variable>_mean, <variable>_sigma, <variable>_minimum, <variable>_maximum and <variable>_n_years on the shared pressure grid",
+        "vertical_coordinate": f"{grid['coordinate']} (Pa); one common grid for every variable and model",
+        "vertical_grid": grid["description"] or f"{len(grid['levels'])} levels, {grid['levels'][-1]:g} to {grid['levels'][0]:g} Pa",
+        "vertical_level_count": len(grid["levels"]),
+        "vertical_interpolation": "monthly zonal fields regridded linearly in log(pressure) before the statistics",
+        "vertical_extrapolation": "none; values outside a source's finite vertical range are NaN",
+        "native_units": "see per-variable field attributes",
         "output_units": "see per-variable field attributes",
         "time_coverage": f"{min(coverage_bounds)} to {max(coverage_bounds)}" if coverage_bounds else "",
-        "history": "calendar-month statistics from native-grid monthly zonal time series"}
+        "history": "monthly zonal values regridded to the common pressure grid, then grouped by calendar month"}
     combined_path = ROOT / config["paths"]["climatology"] / product_name(model, start_year, end_year)
     combined_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = combined_path.with_suffix(".nc.tmp")
     combined.to_netcdf(temporary, engine="netcdf4")
     with xr.open_dataset(temporary) as written:
         missing = [name for name in names if f"{name}_mean" not in written or f"{name}_n_years" not in written]
-    if missing:
+        ungridded = [name for name in names if f"{name}_mean" in written
+                     and written[f"{name}_mean"].ndim == 3 and grid["coordinate"] not in written[f"{name}_mean"].dims]
+    if missing or ungridded:
         temporary.unlink()
-        raise RuntimeError(f"Combined climatology lost variables {missing}: {combined_path}")
+        if missing:
+            raise RuntimeError(f"Combined climatology lost variables {missing}: {combined_path}")
+        raise RuntimeError(f"Combined climatology fields off the common pressure grid: {ungridded}: {combined_path}")
     temporary.replace(combined_path)
     return combined_path
 
@@ -102,24 +156,29 @@ def build_climatology(model, start_year, end_year, variables=None):
     outputs = []
     coverage_bounds = []
     reference = reference_period()["reference_period"]
+    grid = vertical_grid()
     for name in names:
         path = base / f"{name}_monthly_zonal.nc"
         if not path.exists():
             raise FileNotFoundError(path)
         with xr.open_dataset(path, use_cftime=True) as ds:
             coverage_bounds.extend((str(ds.time.values[0]), str(ds.time.values[-1])))
-            stats = monthly_climatology(ds[name], start_year, end_year)
-            if "air_pressure" in ds:
-                p = ds["air_pressure"].where((ds.time.dt.year >= start_year) & (ds.time.dt.year <= end_year), drop=True)
-                stats["air_pressure"] = p.groupby("time.month").mean("time", skipna=True)
+            field, regrid_provenance = on_common_grid(ds, name, start_year, end_year, grid,
+                                                      config["coordinates"].get("level", ""))
+            stats = monthly_climatology(field, start_year, end_year)
             stats.attrs.update({"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"],
                 "source_dataset": config["model"]["dataset_uuid"], "source_archive": config["model"]["archive_base"],
                 "source_variable": name, "source_units": ds[name].attrs.get("units", ""),
-                "output_units": ds[name].attrs.get("units", ""), "vertical_coordinate": config["coordinates"]["level"],
+                "output_units": ds[name].attrs.get("units", ""),
+                "vertical_coordinate": (f"{grid['coordinate']} (Pa), common grid"
+                                        if regrid_provenance["regridded_to_common_pressure_grid"] == "true"
+                                        else "none (two-dimensional field)"),
+                "n_years_definition": "number of years contributing a finite value to this month and grid cell",
                 "time_coverage": f"{str(ds.time.values[0])} to {str(ds.time.values[-1])}",
                 "climatology_period": f"{start_year}-{end_year}", "reference_period_years": end_year-start_year+1,
                 "nominal_reference_year": reference["nominal_reference_year"], "bias_correction": "none",
-                "trend_correction": "none", "history": "monthly zonal values grouped by calendar month"})
+                "trend_correction": "none", "history": "monthly zonal values grouped by calendar month",
+                **regrid_provenance})
             dest = ROOT / config["paths"]["climatology"] / variable_product_name(model, name, start_year, end_year)
             dest.parent.mkdir(parents=True, exist_ok=True)
             temporary = dest.with_suffix(".nc.tmp")
