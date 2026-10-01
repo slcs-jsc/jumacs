@@ -64,6 +64,18 @@ sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh EMAC
 
 For WACCM-X, first inspect and plan download, then transfer the selected monthly `_zm.nc` files from JUDAC. Afterward, submit zonal tasks by variable and its climatology. `make inspect`, `make test`, `make download MODEL=...` (plan), `make download-execute MODEL=...`, `make zonal MODEL=...`, `make climatology MODEL=...`, `make coverage MODEL=...`, and `make compare` are shortcuts. The default 1985–2014 reference period is defined only in `config/climatology.yaml`; the Makefile and CLI omit year flags when unset and read that file, and a model YAML may add a `period:` override. `--start-year` and `--end-year` allow any covered inclusive period. The monthly zonal series remain intact.
 
+## Post-download audit
+
+After a transfer and before enabling any processing, run the offline post-download audit. It reads only local raw files and manifests — no CEDA access, no re-planning, no downloads, no config changes — and opens at most a few small representative files per model (metadata plus tiny slices; no hashing, no full-field reads):
+
+```bash
+jumacs validate-raw --model all       # transfer integrity: completeness, .part strays, signatures, readability
+jumacs coordinate-audit --model all   # conventions: grid, vertical coordinate, time, reader compatibility
+jumacs post-download-audit --model all  # both stages in one run
+```
+
+`validate-raw` reports per model `ok`, `incomplete`, `invalid`, `not_downloaded` or `not_applicable` (manifest vs. disk counts, leftover `.part` files, NetCDF/HDF5 signatures, time decoding, size tolerance against manifest listing estimates) and writes `products/diagnostics/raw_validation/MODEL.json` plus `products/comparison/raw_validation.{csv,md}`. `coordinate-audit` classifies each model's observed horizontal grid (regular, curvilinear, already zonal, partial longitude), vertical coordinate (pressure levels, hybrid sigma-pressure/hybrid height with observed vs. inferred `formula_terms`, pure sigma, altitude) and time handling, and grades reader compatibility `supported_now`, `small_mapping_change`, `reader_extension_needed` or `unsupported` with machine-readable reasons and a `main_action` per model; outputs are `products/diagnostics/coordinate_audit/MODEL.json` and `products/comparison/coordinate_audit.{csv,md}`. Treat `incomplete`/`invalid` or any `reader_extension_needed` as a gate: fix the transfer or extend the reader before submitting zonal/climatology jobs. The audit is descriptive evidence; it never edits `config/models/*.yaml` or enables processing steps.
+
 ## Products
 
 Each `data/processed/MODEL/.../VARIABLE_monthly_zonal.nc` retains time, latitude, native level, native units, source file names, and model identity. `jumacs climatology --model GEOSCCM` creates `products/climatology/GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc` with one NetCDF group per variable, plus independently readable per-variable NetCDF files. Each group has calendar-month `mean`, population `sigma`, `minimum`, `maximum`, and cellwise `n_years`. Products record source dataset/archive, experiment, coverage, period, native/output units, vertical coordinate, and processing history.

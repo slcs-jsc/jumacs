@@ -59,7 +59,35 @@ def main(argv=None):
     compact.add_argument("--variable", action="append")
     sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
     sub.add_parser("download-audit", help="Rebuild complete-archive download plans for every available source and write the mirror-plan audit (offline, no transfer)")
+    for command, help_text in (
+        ("validate-raw", "Validate locally mirrored raw archives against download manifests (offline; no transfer, no inventory refresh)"),
+        ("coordinate-audit", "Audit coordinate conventions and reader compatibility of downloaded raw files (offline; descriptive only)"),
+        ("post-download-audit", "Run validate-raw followed by coordinate-audit (offline)"),
+    ):
+        p = sub.add_parser(command, help=help_text)
+        p.add_argument("--model", choices=(*model_names(), "all"), required=True)
     args = parser.parse_args(argv)
+    if args.command in ("validate-raw", "coordinate-audit", "post-download-audit"):
+        from .config import registry
+        from .raw_validation import validate_model, write_raw_validation
+        from .coordinate_audit import audit_model, write_coordinate_audit
+        models = tuple(registry()) if args.model == "all" else (args.model,)
+        stages = {"validate-raw": ("validate-raw",), "coordinate-audit": ("coordinate-audit",),
+                  "post-download-audit": ("validate-raw", "coordinate-audit")}[args.command]
+        for stage in stages:
+            if stage == "validate-raw":
+                rows = [validate_model(model) for model in models]
+                for row in rows:
+                    print(json.dumps(row, indent=2))
+                for path in write_raw_validation(rows):
+                    print(path)
+            else:
+                rows = [audit_model(model) for model in models]
+                for row in rows:
+                    print(json.dumps({k: v for k, v in row.items() if k not in ("per_file",)}, indent=2))
+                for path in write_coordinate_audit(rows):
+                    print(path)
+        return
     if args.command == "summary":
         from .summary import write_summaries
         for path in write_summaries():
