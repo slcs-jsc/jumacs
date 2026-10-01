@@ -121,11 +121,15 @@ def test_download_all_does_not_leak_its_arguments_to_python_setup(tmp_path):
     fake_python.chmod(0o755)
     (fake_bin / "module").write_text("#!/bin/sh\nexit 0\n")
     (fake_bin / "module").chmod(0o755)
-    env = os.environ.copy()
-    env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+    # Isolated environment: download_all.sh must resolve `python` to the mock, so
+    # the ambient interpreter (active venv, PYTHONPATH, Lmod, shell functions) is
+    # deliberately excluded rather than inherited.
+    env = {"PATH": str(fake_bin) + os.pathsep + os.defpath + os.pathsep + "/usr/bin:/bin",
+           "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "LANG": "C"}
     for args in ([], ["--execute"]):
         result = subprocess.run(["bash", str(checkout / "scripts/download_all.sh")] + args,
                                 env=env, capture_output=True, text=True, cwd=checkout)
         assert "Unknown option" not in result.stdout + result.stderr, result.stdout + result.stderr
+        assert "Python 3.12 (mock)" in result.stdout, result.stdout + result.stderr
         assert result.returncode == 0, result.stdout + result.stderr
         assert "All download-capable JuMACS sources are complete." in result.stdout
