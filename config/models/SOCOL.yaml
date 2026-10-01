@@ -23,7 +23,7 @@ capabilities:
   climatology: false
   compact_waccmx: false
 paths: {raw: data/raw/SOCOL/refD1, zonal: data/processed/SOCOL/refD1, climatology: products/climatology/SOCOL}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: ps, pressure: plev, hybrid_a: a, hybrid_b: b, reference_pressure: p0}
 variables:
   Br: br
   BrCl: brcl

@@ -19,7 +19,7 @@ capabilities:
   climatology: false
   compact_waccmx: false
 paths: {raw: data/raw/CMAM/refD1, zonal: data/processed/CMAM/refD1, climatology: products/climatology/CMAM}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: ps, pressure: plev, hybrid_a: ap, hybrid_b: b}
 variables:
   Br: br
   BrCl: brcl

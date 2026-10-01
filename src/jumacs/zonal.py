@@ -19,6 +19,85 @@ def zonal_mean(ds, variable, longitude="lon", source_kind=None):
     return data
 
 
+def is_hybrid_level(ds, config):
+    level_name = config["coordinates"]["level"]
+    return bool(level_name in ds and (ds[level_name].attrs.get("standard_name")
+                == "atmosphere_hybrid_sigma_pressure_coordinate" or is_waccmx(config)))
+
+
+def _pressure_profile(air_pressure, level):
+    profile = air_pressure.isel(time=0) if "time" in air_pressure.dims else air_pressure
+    for dim in tuple(profile.dims):
+        if dim != level:
+            profile = profile.mean(dim)
+    return np.asarray(profile.values, float).ravel()
+
+
+def zonal_smoke(model, variable):
+    config = load_config(model)
+    coords = config.get("coordinates", {})
+    name = config["variables"].get(variable, variable)
+    report = {"model": model, "variable": variable, "source_variable": name,
+              "coordinate_mapping": coords, "ok": False}
+    if "longitude" not in coords or "level" not in coords:
+        report["reason"] = "coordinates: mapping incomplete (need at least longitude and level)"
+        return report, None
+    files = source_files(model, name)
+    report["source_file"] = files[0].name
+    report["source_file_count"] = len(files)
+    with open_source(files[0], model, name) as ds:
+        sample = ds.isel(time=slice(0, 1))
+        lon_name = coords["longitude"]
+        arr = zonal_mean(sample, name, lon_name, config["model"].get("source_kind")).load()
+        out = arr.to_dataset(name=name)
+        finite = float(np.isfinite(arr.values).mean())
+        report["zonal_dims"] = {d: int(s) for d, s in arr.sizes.items()}
+        report["zonal_finite_fraction"] = round(finite, 4)
+        report["longitude_removed"] = lon_name not in arr.dims
+        report["field_min"] = float(np.nanmin(arr.values)) if finite else None
+        report["field_max"] = float(np.nanmax(arr.values)) if finite else None
+        level_name = coords["level"]
+        hybrid = is_hybrid_level(sample, config)
+        if hybrid:
+            report["vertical_route"] = "hybrid_reconstruction"
+            pressure = hybrid_pressure(sample, config)
+            if lon_name in pressure.dims:
+                pressure = pressure.mean(lon_name, skipna=True)
+            out["air_pressure"] = pressure.load()
+        else:
+            coord = coords.get("pressure") if coords.get("pressure") in sample.coords else level_name
+            report["vertical_route"] = f"pressure_level:{coord}" if coord in sample.coords else f"native_level:{coord}"
+            if coord in sample.coords:
+                pressure = xr.DataArray(
+                    np.asarray(sample[coord].values, float), dims=[coord],
+                    attrs={"units": sample[coord].attrs.get("units", "Pa"),
+                           "standard_name": "air_pressure", "source_coordinate": coord})
+                out["air_pressure"] = pressure.broadcast_like(arr).transpose(*arr.dims)
+                level_name = coord
+    if "air_pressure" in out:
+        profile = _pressure_profile(out["air_pressure"], level_name)
+        profile = profile[np.isfinite(profile)]
+        if profile.size:
+            diffs = np.diff(profile)
+            report["pressure_units"] = out["air_pressure"].attrs.get("units")
+            report["pressure_min_pa"] = round(float(profile.min()), 3)
+            report["pressure_max_pa"] = round(float(profile.max()), 3)
+            report["pressure_monotonic_decreasing"] = bool(profile[0] >= profile[-1])
+            report["pressure_decreasing_fraction"] = round(float((diffs < 0).mean()), 4)
+            report["pressure_plausible"] = bool(profile.max() <= 120000.0 and profile.min() > 0.0 and profile.max() >= 1000.0)
+        else:
+            report["reason"] = "pressure profile empty (non-finite)"
+    else:
+        report["reason"] = "no recoverable pressure coordinate (hybrid coefficients or plev absent)"
+    report["ok"] = bool(report.get("zonal_finite_fraction", 0) >= 0.9 and report.get("longitude_removed", False)
+                        and report.get("pressure_plausible", False) and report.get("pressure_decreasing_fraction", 0) >= 0.9)
+    dest = ROOT / "products/diagnostics/zonal_smoke" / f"{model}_{name}_zonal_smoke.nc"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out.to_netcdf(dest)
+    report["output_file"] = str(dest)
+    return report, dest
+
+
 def build_zonal(model, variable):
     config = load_config(model)
     name = config["variables"].get(variable, variable)
@@ -34,9 +113,7 @@ def build_zonal(model, variable):
                 longitudes = np.sort(np.unique(np.mod(ds[lon_name].values, 360)))
                 gaps = np.diff(np.r_[longitudes, longitudes[0] + 360])
                 longitude_checks.append(bool(len(longitudes) > 1 and np.max(gaps) <= 1.5 * np.median(gaps)))
-            level_name = config["coordinates"]["level"]
-            is_hybrid = (level_name in ds and (ds[level_name].attrs.get("standard_name")
-                         == "atmosphere_hybrid_sigma_pressure_coordinate" or is_waccmx(config)))
+            is_hybrid = is_hybrid_level(ds, config)
             # Limit the largest in-memory full field to 12 monthly samples.
             for start in range(0, ds.sizes["time"], 12):
                 chunk = ds.isel(time=slice(start, start + 12))

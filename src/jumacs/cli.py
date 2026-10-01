@@ -66,7 +66,15 @@ def main(argv=None):
     ):
         p = sub.add_parser(command, help=help_text)
         p.add_argument("--model", choices=(*model_names(), "all"), required=True)
+    smoke = sub.add_parser("zonal-smoke", help="Process one time slice of one real raw file to validate a model's coordinate mapping end-to-end (writes only products/diagnostics/zonal_smoke)")
+    smoke.add_argument("--model", choices=model_names(), required=True)
+    smoke.add_argument("--variable", default="temperature")
     args = parser.parse_args(argv)
+    if args.command == "zonal-smoke":
+        from .zonal import zonal_smoke
+        report, _ = zonal_smoke(args.model, args.variable)
+        print(json.dumps(report, indent=2))
+        return
     if args.command in ("validate-raw", "coordinate-audit", "post-download-audit"):
         from .config import registry
         from .raw_validation import validate_model, write_raw_validation
