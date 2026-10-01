@@ -3,8 +3,32 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from jumacs.build import build_model, build_models, model_list
+from jumacs.build import build_model, build_models, configured_variables, model_list
 from jumacs.config import load_config
+
+
+class MissingRawSources:
+    """Stand in for zonal processing so unit tests never touch a real raw archive."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, model, name):
+        self.calls.append(name)
+        raise FileNotFoundError(f"no downloaded monthly files for {model} {name}")
+
+
+def isolate(tmp_path, monkeypatch):
+    """Confine build tests to tmp_path and replace the directly imported zonal entry point."""
+    import jumacs.build as build_module
+    import jumacs.climatology as climatology_module
+    import jumacs.zonal as zonal_module
+    missing = MissingRawSources()
+    monkeypatch.setattr(build_module, "ROOT", tmp_path)
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    monkeypatch.setattr(zonal_module, "ROOT", tmp_path)
+    monkeypatch.setattr(build_module, "build_zonal", missing)
+    return missing
 
 
 def synthetic_zonal(path, name, value, with_pressure):
@@ -18,22 +42,21 @@ def synthetic_zonal(path, name, value, with_pressure):
 
 
 def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_path, monkeypatch):
-    import jumacs.build as build_module
-    import jumacs.climatology as climatology_module
-    monkeypatch.setattr(build_module, "ROOT", tmp_path)
-    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    missing = isolate(tmp_path, monkeypatch)
     zonal = tmp_path / load_config("CMAM")["paths"]["zonal"]
     synthetic_zonal(zonal / "ta_monthly_zonal.nc", "ta", 220.0, True)
     synthetic_zonal(zonal / "o3_monthly_zonal.nc", "o3", 8e-6, True)
     synthetic_zonal(zonal / "h2o_monthly_zonal.nc", "h2o", 5e-6, False)
+    configured = set(configured_variables("CMAM", load_config("CMAM")))
     report = build_model("CMAM", 1985, 2014)
     assert report["ok"] is True
     assert report["climatology_period"] == "1985-2014"
     assert set(report["variables_processed"]) == {"ta", "o3", "h2o"}
     assert report["zonal_built"] == []
     assert set(report["zonal_reused"]) == {"ta", "o3", "h2o"}
-    assert len(report["skipped"]) == len(load_config("CMAM")["variables"]) - 3
-    assert all("no downloaded monthly files" in row["reason"].lower() for row in report["skipped"])
+    assert set(missing.calls) == configured - {"ta", "o3", "h2o"}
+    assert len(report["skipped"]) == len(missing.calls) == len(configured) - 3
+    assert all("no downloaded monthly files" in row["reason"] for row in report["skipped"])
     combined = xr.open_dataset(report["combined_product"])
     for name, value in (("ta", 220.0), ("o3", 8e-6), ("h2o", 5e-6)):
         assert np.allclose(combined[f"{name}_mean"].sel(month=1).values, value)
@@ -52,16 +75,15 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
 
 
 def test_build_model_reports_a_period_without_data(tmp_path, monkeypatch):
-    import jumacs.build as build_module
-    import jumacs.climatology as climatology_module
-    monkeypatch.setattr(build_module, "ROOT", tmp_path)
-    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    missing = isolate(tmp_path, monkeypatch)
     synthetic_zonal(tmp_path / load_config("CMAM")["paths"]["zonal"] / "ta_monthly_zonal.nc", "ta", 220.0, True)
     report = build_model("CMAM", 1950, 1960)
     assert report["ok"] is False
+    assert report["variables_processed"] == []
     skipped = {row["variable"]: row["reason"] for row in report["skipped"]}
     assert "outside 1950-1960" in skipped["ta"]
-    assert "no downloaded monthly files" in skipped["br"].lower()
+    assert "no downloaded monthly files" in skipped["br"]
+    assert "br" in missing.calls and "ta" not in missing.calls
 
 
 def test_model_list_accepts_one_model_comma_lists_and_all():
