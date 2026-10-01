@@ -29,7 +29,7 @@ def compare_fields(geos, emac, geos_pressure, emac_pressure, target_pa, labels=(
         g = g.interp(lat=common_lat)
     e = e.sel(lat=common_lat)
     g, e = xr.align(g, e, join="inner")
-    if g.sizes.get("month", 1) == 0:
+    if not any(g.sizes.get(dim, 0) for dim in ("time", "month")):
         raise ValueError("No overlapping calendar months")
     both = np.isfinite(g) & np.isfinite(e)
     difference = (g - e).where(both)
@@ -53,30 +53,39 @@ def _pressure(ds):
 
 
 def compare_period(start_year, end_year, pressure_pa, models=("GEOSCCM", "EMAC")):
+    """Compare climatological monthly means from two single-file products."""
+    from .climatology import product_name
     configs = {m: load_config(m) for m in models}
-    report = {"start_year": start_year, "end_year": end_year, "compared": [], "skipped": {}}
-    for canonical in sorted(set(configs[models[0]]["variables"]) & set(configs[models[1]]["variables"])):
-        names = {m: configs[m]["variables"][canonical] for m in configs}
-        from .climatology import variable_product_name
-        paths = {m: ROOT / configs[m]["paths"]["climatology"] / variable_product_name(m, names[m], start_year, end_year) for m in configs}
-        if not all(p.exists() for p in paths.values()):
-            report["skipped"][canonical] = "climatology missing"; continue
-        with xr.open_dataset(paths[models[0]]) as gd, xr.open_dataset(paths[models[1]]) as ed:
-            if not compatible_units(gd.attrs.get("source_units"), ed.attrs.get("source_units")):
+    paths = {m: ROOT / configs[m]["paths"]["climatology"] / product_name(m, start_year, end_year) for m in configs}
+    absent = [m for m in models if not paths[m].exists()]
+    if absent:
+        raise FileNotFoundError(f"climatology product missing for {', '.join(absent)}; "
+                                f"run jumacs build --model {absent[0]} --start-year {start_year} --end-year {end_year}")
+    report = {"start_year": start_year, "end_year": end_year, "products": {m: str(paths[m]) for m in models},
+              "compared": [], "skipped": {}}
+    with xr.open_dataset(paths[models[0]]) as first, xr.open_dataset(paths[models[1]]) as second:
+        open_datasets = {models[0]: first, models[1]: second}
+        for canonical in sorted(set(configs[models[0]]["variables"]) & set(configs[models[1]]["variables"])):
+            names = {m: configs[m]["variables"][canonical] for m in configs}
+            fields = {m: open_datasets[m].get(f"{names[m]}_mean") for m in models}
+            if any(field is None for field in fields.values()):
+                report["skipped"][canonical] = "variable not in both products"; continue
+            units = {m: fields[m].attrs.get("units", "") for m in models}
+            if not compatible_units(units[models[0]], units[models[1]]):
                 report["skipped"][canonical] = "units differ"; continue
-            gp, ep = _pressure(gd), _pressure(ed)
-            if gp is None or ep is None:
-                report["skipped"][canonical] = "native pressure coordinate unavailable"; continue
-            g, e = gd["mean"], ed["mean"]
-            g.attrs["units"] = gd.attrs.get("source_units", "")
-            e.attrs["units"] = ed.attrs.get("source_units", "")
+            pressures = {m: _pressure(open_datasets[m]) for m in models}
+            if any(pressure is None for pressure in pressures.values()):
+                report["skipped"][canonical] = "common pressure coordinate unavailable"; continue
+            left, right = (fields[m].load().assign_attrs(units=units[m]) for m in models)
             try:
-                out = compare_fields(g, e, gp, ep, pressure_pa, models)
+                out = compare_fields(left, right, pressures[models[0]], pressures[models[1]], pressure_pa, models)
             except ValueError as exc:
                 report["skipped"][canonical] = str(exc); continue
             dest = ROOT / "products/comparison" / f"jumacs_{models[0].lower()}_vs_{models[1].lower()}_{canonical.lower()}_{start_year}-{end_year}.nc"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            out.attrs = {"project": "JuMACS", "models": ", ".join(models), "operation": f"{models[0]} minus {models[1]}; no model mean", "climatology_period": f"{start_year}-{end_year}"}
+            out.attrs = {"project": "JuMACS", "models": ", ".join(models), "operation": f"{models[0]} minus {models[1]}; no model mean",
+                         "climatology_period": f"{start_year}-{end_year}",
+                         "comment": "climatological monthly means compared on the shared JuMACS pressure grid"}
             temporary = dest.with_suffix(".nc.tmp")
             out.to_netcdf(temporary, engine="netcdf4")
             temporary.replace(dest)

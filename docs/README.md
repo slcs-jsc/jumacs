@@ -15,6 +15,8 @@ The repository root is the HPC working directory. Run JuMACS commands there.
 
 `config/climatology.yaml` is the single definition of both the reference period and the project-wide common pressure grid (`vertical_grid`: 101 levels in Pa, uniform in `log10(pressure)` with ten levels per decade, `linear_log_pressure`, `extrapolation: none`). Every climatology product is written on that axis as the shared `pressure` coordinate; changing the list and rebuilding is the only way to change it.
 
+Each model and period yields **one** CF-1.13 NetCDF in `products/climatology/MODEL/` holding every processed species as `<variable>_<statistic>` (`mean`, `sigma`, `minimum`, `maximum`, `n_years`) on a twelve-cell climatological `time` axis with `climatology_bounds` and `cell_methods` stating the across-year statistic. See [../README.md](../README.md#products) for the attribute conventions.
+
 ```text
 HPC site/                          ──rsync──> local clone/site/
                                    └─rsync──> web site mirror
@@ -22,4 +24,4 @@ HPC five finished climatology NCs  ──rsync──> local clone/products/clima
 HPC products/release/              ──rsync──> public data location
 ```
 
-Run `make mirror-local` in the local Git clone. It uses `~/jumount/data/slmet/model_data/jumacs` as the default source; set `JUMACS_HPC_ROOT` if the mount differs. It copies only the three combined model climatologies and two compact extension NetCDF files for 1985–2014. `make mirror-web` and `make publish-data` still require non-empty destination environment variables. No mirror runs during builds or tests. GitHub hosts code and documentation; the HPC filesystem hosts complete scientific data and generated products. No GitHub Pages configuration is used.
+Run `make mirror-local` in the local Git clone. It uses `~/jumount/data/slmet/model_data/jumacs` as the default source; set `JUMACS_HPC_ROOT` if the mount differs. It copies only the three model climatology files (one CF-1.13 NetCDF each) and two compact extension NetCDF files for 1985–2014. `make mirror-web` and `make publish-data` still require non-empty destination environment variables. No mirror runs during builds or tests. GitHub hosts code and documentation; the HPC filesystem hosts complete scientific data and generated products. No GitHub Pages configuration is used.

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from .climatology import variable_product_name
+from .climatology import product_name
 from .config import ROOT, load_config, has_capability, reference_period
 
 
@@ -43,17 +43,22 @@ def _unit_key(unit):
 
 
 def _read(model, canonical, start_year, end_year):
+    """Extract one variable's climatological mean from the model's single product."""
     config = load_config(model)
     name = config["variables"].get(canonical)
     if not name:
         return None
-    path = ROOT / config["paths"]["climatology"] / variable_product_name(model, name, start_year, end_year)
+    path = ROOT / config["paths"]["climatology"] / product_name(model, start_year, end_year)
     if not path.exists():
         return None
+    field = f"{name}_mean"
     with xr.open_dataset(path) as ds:
-        if ds["mean"].ndim != 3 or "lat" not in ds["mean"].dims:
+        if field not in ds or ds[field].ndim != 3 or "lat" not in ds[field].dims:
             return None
-        return ds.load()
+        selected = ds[[field]].rename({field: "mean"}).load()
+    selected["mean"].attrs.setdefault("units", "")
+    selected.attrs["output_units"] = selected["mean"].attrs["units"]
+    return selected
 
 
 def _on_grid(ds, height_ds, latitude, height_km):
@@ -61,13 +66,17 @@ def _on_grid(ds, height_ds, latitude, height_km):
     field = ds["mean"].interp(lat=latitude).values
     z = height_ds["mean"].interp(lat=latitude).values / 1000.0
     if field.shape[1] != z.shape[1] or ds["mean"].dims[1] != height_ds["mean"].dims[1]:
-        # AmonZ pressure levels: determine altitude from the model's own
+        # Pressure levels: determine altitude from the model's own
         # monthly geopotential-height/pressure profile in log pressure.
-        pressure = height_ds["air_pressure"].interp(lat=latitude).transpose(*height_ds["mean"].dims).values
+        height_level = height_ds["mean"].dims[1]
+        source = height_ds["air_pressure"] if "air_pressure" in height_ds else height_ds[height_level]
+        pressure = source.interp(lat=latitude).transpose(*height_ds["mean"].dims).values
         level = ds["mean"].dims[1]
-        target_pa = ds[level].values
-        if ds[level].attrs.get("units") == "hPa":
+        level_coord = ds[level] if level in ds else ds[height_level]
+        target_pa = level_coord.values
+        if level_coord.attrs.get("units") == "hPa":
             target_pa = target_pa * 100.0
+
         mapped = np.full_like(field, np.nan, dtype=float)
         for m in range(12):
             for j in range(len(latitude)):

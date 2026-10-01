@@ -57,17 +57,19 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert set(missing.calls) == configured - {"ta", "o3", "h2o"}
     assert len(report["skipped"]) == len(missing.calls) == len(configured) - 3
     assert all("no downloaded monthly files" in row["reason"] for row in report["skipped"])
-    combined = xr.open_dataset(report["combined_product"])
+    combined = xr.open_dataset(report["product"], decode_cf=False)
+    assert report["conventions"] == "CF-1.13"
+    assert report["variables_in_product"] == 3
     levels = combined["pressure"].values
     assert len(levels) == 101 and levels[0] == 100000.0
     covered = levels >= 1000.0
     for name, value in (("ta", 220.0), ("o3", 8e-6), ("h2o", 5e-6)):
-        mean = combined[f"{name}_mean"].sel(month=1)
+        mean = combined[f"{name}_mean"].isel(time=0)
         assert np.allclose(mean.values[covered], value)
         assert np.isnan(mean.values[~covered]).all()
-        assert combined[f"{name}_n_years"].sel(month=1).max().item() == 30
+        assert combined[f"{name}_n_years"].isel(time=0).max().item() == 30
         check = report["checks"][name]
-        assert check["dimensions"] == ["month", "pressure", "lat"]
+        assert check["dimensions"] == ["time", "pressure", "lat"]
         assert check["n_years_max"] == 30 and check["n_years_min"] == 0
         assert check["values_outside_native_coverage"] == 0
         assert check["finite_fraction"] == round(covered.mean(), 4)
@@ -80,9 +82,17 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert combined["pressure"].attrs["standard_name"] == "air_pressure"
     assert not [dim for dim in combined.dims if dim.endswith(("_lev", "_plev"))]
     assert combined["o3_mean"].attrs["source_variable"] == "o3"
-    assert combined["o3_mean"].attrs["regridded_to_common_pressure_grid"] == "true"
-    assert combined["o3_mean"].attrs["native_level_count"] == 3
+    assert combined["o3_mean"].attrs["cell_methods"] == "longitude: mean time: mean within years time: mean over years"
+    assert combined["o3_mean"].attrs["native_pressure_min_pa"] == 1000.0
+    assert combined["o3_sigma"].attrs["cell_methods"].endswith("time: standard_deviation over years")
+    assert combined["o3_mean"].dtype == "float32"
+    assert combined["o3_n_years"].dtype == "int16"
+    assert combined["time"].dtype == "float64"
+    assert combined["time"].attrs["climatology"] == "climatology_bounds"
+    assert "time:bounds" not in combined["time"].attrs
+    assert combined["climatology_bounds"].dims == ("time", "nv")
     assert "source_units" not in combined["o3_n_years"].attrs
+    assert set(combined["o3_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable"}
     combined.close()
 
 

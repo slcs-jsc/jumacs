@@ -3,9 +3,10 @@ import pytest
 import xarray as xr
 
 import jumacs.config as config_module
-from jumacs.climatology import (MissingPressureCoordinate, build_climatology, combined_variables,
-                                monthly_climatology, on_common_grid, write_combined)
-from jumacs.config import vertical_grid
+from jumacs import cf
+from jumacs.climatology import (MissingPressureCoordinate, assemble_product, build_climatology,
+                                monthly_climatology, on_common_grid, product_name, variable_statistics)
+from jumacs.config import load_config, vertical_grid
 from jumacs.vertical import interpolate_log_pressure, native_pressure, regrid_to_common_grid
 
 GRID = vertical_grid()
@@ -157,7 +158,7 @@ def test_three_dimensional_field_without_any_pressure_information_is_rejected():
         on_common_grid(ds, "o3", 2000, 2000, GRID)
 
 
-def test_two_dimensional_fields_keep_their_own_shape(tmp_path, monkeypatch):
+def test_two_dimensional_fields_share_the_three_dimensional_product(tmp_path, monkeypatch):
     import jumacs.climatology as climatology_module
     monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
     zonal = tmp_path / "data/processed/GEOSCCM/refD1"
@@ -168,45 +169,41 @@ def test_two_dimensional_fields_keep_their_own_shape(tmp_path, monkeypatch):
     }, coords={"time": times(24), "plev": ("plev", [1e5, 1e3], {"units": "Pa", "standard_name": "air_pressure"}), "lat": [-45., 45.]})
     mixed.to_netcdf(zonal / "o3_monthly_zonal.nc")
     mixed[["trop"]].to_netcdf(zonal / "trop_monthly_zonal.nc")
-    outputs = build_climatology("GEOSCCM", 2000, 2001, ["o3", "trop"])
-    with xr.open_dataset(outputs[0]) as three_d:
-        assert set(three_d["mean"].dims) == {"month", "pressure", "lat"}
-        assert three_d.sizes["pressure"] == 101
-        assert three_d.attrs["regridded_to_common_pressure_grid"] == "true"
-        assert three_d.attrs["native_level_dimension"] == "plev"
-        assert three_d.attrs["vertical_coordinate"] == "pressure (Pa), common grid"
-        assert three_d["mean"].attrs["vertical_extrapolation"] == "none"
-    with xr.open_dataset(outputs[1]) as two_d:
-        assert set(two_d["mean"].dims) == {"month", "lat"}
-        assert "pressure" not in two_d.dims
-        assert two_d.attrs["regridded_to_common_pressure_grid"] == "false"
-        assert two_d.attrs["vertical_coordinate"] == "none (two-dimensional field)"
-        assert "two-dimensional" in two_d.attrs["vertical_treatment"]
-    with xr.open_dataset(outputs[2]) as combined:
-        assert set(combined.o3_mean.dims) == {"month", "pressure", "lat"}
-        assert set(combined.trop_mean.dims) == {"month", "lat"}
-        assert combined.sizes["pressure"] == 101
-        assert combined.attrs["vertical_level_count"] == len(GRID["levels"]) == 101
-        assert not [dim for dim in combined.dims if dim not in ("month", "pressure", "lat")]
+    product = build_climatology("GEOSCCM", 2000, 2001, ["o3", "trop"])
+    assert product == tmp_path / load_config("GEOSCCM")["paths"]["climatology"] / product_name("GEOSCCM", 2000, 2001)
+    assert sorted(p.name for p in product.parent.glob("*.nc")) == [product.name]
+    with xr.open_dataset(product, decode_cf=False) as ds:
+        cf.assert_product(ds, names=("o3", "trop"), grid=GRID)
+        assert set(ds.o3_mean.dims) == {"time", "pressure", "lat"}
+        assert set(ds.trop_mean.dims) == {"time", "lat"}
+        assert ds.sizes["pressure"] == 101 and ds.vertical_level_count == len(GRID["levels"]) == 101
+        assert ds.o3_mean.attrs["native_pressure_min_pa"] == 1000.0
+        assert ds.attrs["vertical_coordinate"].startswith("pressure (Pa)")
+        assert not [dim for dim in ds.dims if dim not in ("time", "pressure", "lat", cf.BOUNDS_DIMENSION)]
 
 
-def test_combined_product_refuses_separate_vertical_dimensions(tmp_path, monkeypatch):
-    import jumacs.climatology as climatology_module
-    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
-    folder = tmp_path / "products/climatology/CMAM"
-    folder.mkdir(parents=True)
-    for name, levels in (("o3", [1e5, 1e4]), ("br", [1e5, 1e4])):
-        xr.Dataset({f"{name}_mean": (("month", f"{name}_plev", "lat"), np.ones((1, 2, 1)))},
-                   coords={"month": [1], f"{name}_plev": (f"{name}_plev", levels), "lat": [0.]},
-                   attrs={"source_variable": name}).to_netcdf(folder / f"jumacs_cmam_refd1_{name}_climatology_2000-2001.nc")
-    with pytest.raises(RuntimeError, match="per-variable vertical dimensions"):
-        write_combined("CMAM", 2000, 2001, ["o3", "br"])
+def statistics(name, dims, coords):
+    periods = len(np.atleast_1d(coords["month"]))
+    vertical = coords.get("pressure", [0.0, 0.0])
+    levels = len(np.atleast_1d(vertical[1] if isinstance(vertical, tuple) else vertical))
+    return xr.Dataset({statistic: (dims, np.ones((periods, levels, 1))) for statistic in cf.STATISTIC_ORDER}, coords=coords)
 
 
-def test_shared_coordinate_survives_the_combined_merge():
-    coords = {"month": [1], "pressure": ("pressure", [1e5, 1e4], {"units": "Pa"}), "lat": [0.]}
-    parts = [combined_variables(name, xr.Dataset({"mean": (("month", "pressure", "lat"), np.ones((1, 2, 1)))}, coords=coords))
+def test_shared_vertical_coordinate_survives_the_merge():
+    coords = {"month": list(range(1, 13)), "pressure": ("pressure", np.asarray(GRID["levels"], float), {"units": "Pa"}), "lat": [0.]}
+    parts = [variable_statistics(name, statistics(name, ("month", "pressure", "lat"), coords), {"units": "mol mol-1"}, {})
              for name in ("o3", "br")]
-    merged = xr.merge(parts, join="outer", compat="override")
-    assert list(merged.dims) == ["month", "pressure", "lat"]
-    assert set(merged.data_vars) == {"o3_mean", "br_mean"}
+    product = assemble_product("CMAM", 2000, 2001, parts)
+    assert set(product.data_vars) == {f"{name}_{statistic}" for name in ("o3", "br") for statistic in cf.STATISTIC_ORDER} | {"climatology_bounds"}
+    assert set(product.dims) == {"time", "pressure", "lat", cf.BOUNDS_DIMENSION}
+    assert list(product.o3_mean.dims) == ["time", "pressure", "lat"]
+    assert product.sizes["pressure"] == len(GRID["levels"])
+    assert product.time.dtype == np.dtype("float64") and product.sizes["time"] == 12
+
+
+def test_product_refuses_per_variable_vertical_dimensions():
+    coords = {"month": [1], "o3_plev": ("o3_plev", [1e5, 1e4]), "lat": [0.]}
+    parts = [variable_statistics(name, statistics(name, ("month", "o3_plev", "lat"), coords), {"units": "mol mol-1"}, {})
+             for name in ("o3", "br")]
+    with pytest.raises(RuntimeError, match="per-variable vertical dimensions"):
+        assemble_product("CMAM", 2000, 2001, parts)

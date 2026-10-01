@@ -145,16 +145,17 @@ def main(argv=None):
         print(compare_period(args.start_year or reference["start_year"], args.end_year or reference["end_year"], [p * 100 for p in args.pressure_hpa], tuple(args.models)))
         return
     if args.command == "evaluate":
-        from .climatology import variable_product_name
+        from .climatology import product_name
+        from .config import ROOT
         config = load_config(args.model)
         start, end = args.start_year or reference["start_year"], args.end_year or reference["end_year"]
         name = config["variables"].get(args.variable, args.variable)
-        source = config["paths"]["climatology"]
-        from .config import ROOT
-        model_path = ROOT / source / variable_product_name(args.model, name, start, end)
+        model_path = ROOT / config["paths"]["climatology"] / product_name(args.model, start, end)
+        if not model_path.exists():
+            parser.error(f"no climatology product for {args.model} {start}-{end}; run jumacs build --model {args.model}")
         with xr.open_dataset(model_path) as model_ds, xr.open_dataset(args.evaluation_file) as evaluation_ds:
             field = evaluation_ds[args.variable]
-            model_field = model_ds["mean"].assign_attrs(units=model_ds.attrs["output_units"])
+            model_field = model_ds[f"{name}_mean"].load().assign_attrs(units=model_ds[f"{name}_mean"].attrs.get("units", ""))
             result = evaluate_fields(model_field, field, _pressure(model_ds), _pressure(evaluation_ds), [p*100 for p in args.pressure_hpa])
             dest = ROOT / "products/comparison/evaluation" / f"jumacs_{args.model.lower()}_{name}_{start}-{end}_evaluation.nc"
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -211,7 +212,7 @@ def main(argv=None):
                     if variables:
                         raise
         elif args.command == "climatology":
-            for path in build_climatology(model, start, end, variables): print(path)
+            print(build_climatology(model, start, end, variables))
         elif args.command == "validate":
             print(validate(model))
         elif args.command == "coverage":

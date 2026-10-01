@@ -61,35 +61,38 @@ def trend_plots(model):
 
 def quicklooks(model, start_year, end_year):
     import matplotlib.pyplot as plt
+    from .climatology import product_name
     config = load_config(model)
     outputs = []
     targets = ("temperature", "geopotential_height", "O3", "H2O", "CO2", "CH4", "N2O", "CO", "HNO3", "NO", "NO2", "HCl", "ClO", "ClONO2", "BrO", "HOCl", "N2O5", "HNO4", "CFC-11", "CFC-12", "SF6")
-    for canonical in targets:
-        name = config["variables"].get(canonical)
-        from .climatology import variable_product_name
-        path = ROOT / config["paths"]["climatology"] / variable_product_name(model, name, start_year, end_year) if name else None
-        if path is None or not path.exists():
-            continue
-        with xr.open_dataset(path) as ds:
+    path = ROOT / config["paths"]["climatology"] / product_name(model, start_year, end_year)
+    if not path.exists():
+        return outputs
+    with xr.open_dataset(path) as product:
+        for canonical in targets:
+            name = config["variables"].get(canonical)
+            field = product[f"{name}_mean"] if name and f"{name}_mean" in product else None
+            if field is None or "lat" not in field.dims or field.ndim != 3:
+                continue
+            level = next(d for d in ("pressure", "lev", "plev") if d in field.dims)
+            if field[level].attrs.get("units", "").lower() not in ("pa", "pascal", "pascals") and \
+                    field[level].attrs.get("standard_name") != "air_pressure":
+                continue
             for month in (1, 4, 7, 10):
-                if month not in ds.month:
-                    continue
-                field = ds["mean"].sel(month=month)
-                if "lat" not in field.dims or not any(d in field.dims for d in ("pressure", "lev", "plev")):
-                    continue
-                level = next(d for d in ("pressure", "lev", "plev") if d in field.dims)
-                values = field.transpose(level, "lat").values
-                if "air_pressure" in ds:
-                    pressure = ds["air_pressure"].sel(month=month).transpose(level, "lat").values
-                elif field[level].attrs.get("units", "").lower() in ("pa", "pascal", "pascals") or \
-                        field[level].attrs.get("standard_name") == "air_pressure":
-                    pressure = np.broadcast_to(field[level].values[:, None], values.shape)
+                if "month" in field.coords:
+                    if month not in field.coords["month"].values:
+                        continue
+                    slice_ = field.sel(month=month)
                 else:
-                    continue
+                    if field.sizes.get("time", 0) < month:
+                        continue
+                    slice_ = field.isel(time=month - 1)
+                values = slice_.transpose(level, "lat").values
+                pressure = np.broadcast_to(field[level].values[:, None], values.shape)
                 latitude = np.broadcast_to(field.lat.values[None, :], values.shape)
                 fig, ax = plt.subplots(figsize=(7, 4))
                 mesh = ax.pcolormesh(latitude, pressure / 100., values, shading="auto")
-                fig.colorbar(mesh, ax=ax, label=ds.attrs.get("source_units", ""))
+                fig.colorbar(mesh, ax=ax, label=field.attrs.get("units", ""))
                 ax.set_yscale("log")
                 ax.invert_yaxis()
                 ax.set_xlabel("Latitude (degrees north)")

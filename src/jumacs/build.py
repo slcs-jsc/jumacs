@@ -1,7 +1,8 @@
-"""One command per model: monthly zonal series, climatology, and a verified combined product."""
+"""One command per model: monthly zonal series and one verified CF-1.13 climatology product."""
 import numpy as np
 import xarray as xr
 
+from . import cf
 from .archive import discovered_zm_variables
 from .climatology import build_climatology
 from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names, vertical_grid
@@ -76,26 +77,25 @@ def build_model(model, start_year=None, end_year=None, variables=None):
         report["ok"] = False
         report["error"] = f"no variable of {model} has monthly zonal data in {start}-{end}; run jumacs download --model {model} --start-year {start} --end-year {end}"
         return report
-    outputs = build_climatology(model, start, end, available)
-    combined_path = outputs[-1]
-    report["climatology_products"] = [str(path) for path in outputs[:-1]]
-    report["combined_product"] = str(combined_path)
-    with xr.open_dataset(combined_path) as combined:
+    product_path = build_climatology(model, start, end, available)
+    report["product"] = str(product_path)
+    report["conventions"] = cf.CONVENTIONS
+    with xr.open_dataset(product_path) as product:
         coordinate = vertical_grid()["coordinate"]
-        if coordinate in combined.coords:
-            levels = np.asarray(combined[coordinate].values, float)
+        if coordinate in product.coords:
+            levels = np.asarray(product[coordinate].values, float)
             report["vertical_grid"] = {"coordinate": coordinate, "level_count": int(levels.size),
                                        "pressure_min_pa": round(float(levels.min()), 4),
                                        "pressure_max_pa": round(float(levels.max()), 4),
                                        "monotonic": bool(np.all(np.diff(levels) <= 0) or np.all(np.diff(levels) >= 0)),
                                        "interpolation": "linear_log_pressure", "extrapolation": "none"}
         for name in available:
-            report["checks"][name] = check_variable(name, combined)
-    lost = [name for name in available if name not in report["checks"]]
-    report["variables_in_combined"] = len(report["checks"])
+            report["checks"][name] = check_variable(name, product)
+    lost = [name for name in available if not report["checks"].get(name, {}).get("present")]
+    report["variables_in_product"] = sum(1 for check in report["checks"].values() if check.get("present"))
     report["ok"] = bool(not lost and all(check["ok"] for check in report["checks"].values()))
     if lost:
-        report["error"] = f"combined product lacks {', '.join(lost)}: {combined_path}"
+        report["error"] = f"product lacks {', '.join(lost)}: {product_path}"
     return report
 
 

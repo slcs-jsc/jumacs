@@ -3,6 +3,7 @@ import xarray as xr
 import cftime
 from pathlib import Path
 
+from jumacs import cf
 from jumacs.config import load_config, reference_period
 from jumacs.archive import TARGETS
 from jumacs.climatology import monthly_climatology, product_name, build_climatology
@@ -95,7 +96,7 @@ def test_evaluation_pressure_coordinate_and_month_overlap():
     assert np.isnan(result.difference.sel(pressure=1000.)).all()
 
 
-def test_climatology_provenance_and_combined_product(tmp_path, monkeypatch):
+def test_climatology_provenance_and_cf_product(tmp_path, monkeypatch):
     import jumacs.climatology as module
     monkeypatch.setattr(module, "ROOT", tmp_path)
     zonal = tmp_path / "data/processed/GEOSCCM/refD1"; zonal.mkdir(parents=True)
@@ -103,23 +104,25 @@ def test_climatology_provenance_and_combined_product(tmp_path, monkeypatch):
     data = xr.Dataset({"o3": (("time","plev","lat"), np.ones((360,2,1)), {"units":"mol/mol"})},
         coords={"time":times,"plev":xr.DataArray([100000.,10000.],dims="plev",attrs={"units":"Pa","standard_name":"air_pressure"}),"lat":[0.]})
     data.to_netcdf(zonal / "o3_monthly_zonal.nc")
-    outputs = build_climatology("GEOSCCM",1985,2014,["O3"])
-    assert len(outputs) == 2
-    with xr.open_dataset(outputs[-1]) as root:
+    product = build_climatology("GEOSCCM",1985,2014,["O3"])
+    assert product.name == "jumacs_geosccm_refd1_climatology_1985-2014.nc"
+    assert [path.name for path in product.parent.iterdir()] == [product.name]
+    with xr.open_dataset(product, decode_cf=False) as root:
+        cf.assert_product(root, names=("o3",))
+        assert root.attrs["Conventions"] == "CF-1.13"
         assert root.attrs["nominal_reference_year"] == 2000
         assert root.attrs["reference_period_years"] == 30
         assert root.attrs["model"] == "GEOSCCM"
         assert root.attrs["bias_correction"] == "none"
-        assert root.attrs["variables"] == "o3"
-        assert root.o3_n_years.sel(month=1).max().item() == 30
+        assert root.attrs["variable_count"] == 1
+        assert root.o3_n_years.isel(time=0).max().item() == 30
         assert root.o3_mean.attrs["source_variable"] == "o3"
-        assert set(root.o3_mean.dims) == {"month", "pressure", "lat"}
+        assert root.o3_mean.dims == ("time", "pressure", "lat")
         assert root.attrs["vertical_coordinate"].startswith("pressure")
-        assert root.attrs["vertical_interpolation"] == "monthly zonal fields regridded linearly in log(pressure) before the statistics"
+        assert root.attrs["vertical_interpolation"].startswith("monthly zonal fields regridded linearly in log(pressure)")
         assert root.attrs["vertical_extrapolation"].startswith("none")
-        assert root.o3_mean.attrs["regridded_to_common_pressure_grid"] == "true"
         above_top = (root.pressure < 10000.).values
-        mean = root.o3_mean.sel(month=1).transpose("pressure", "lat").values
+        mean = root.o3_mean.isel(time=0).transpose("pressure", "lat").values
         assert np.isnan(mean[above_top]).all()
         assert np.isfinite(mean[~above_top]).all()
 
