@@ -38,13 +38,17 @@ From the repository and HPC project root `/p/data1/slmet/model_data/jumacs`:
 ```bash
 source scripts/python_setup.sh
 python -m pytest -q
-jumacs inspect --model GEOSCCM
-jumacs inspect --model EMAC
-jumacs inspect --model WACCM-X
-jumacs download --model WACCM-X --start-year 1985 --end-year 2014  # size plan only
+jumacs inspect --model all            # archive contents, variable mappings, readiness
+jumacs download --model CMAM --start-year 1985 --end-year 2014  # size plan only
+jumacs build --model CMAM --start-year 1985 --end-year 2014     # zonal series + climatology + report
+jumacs quicklook --model CMAM --start-year 1985 --end-year 2014
+jumacs build --model CMAM,SOCOL --start-year 1985 --end-year 2014   # several models in one call
+jumacs build --model all              # every ready model with validated zonal processing
 jumacs download --model GEOSCCM --all-files  # complete-archive mirror plan (all families/members, latest versions)
 jumacs download-audit  # audit all mirror plans, write products/comparison/download_plan_summary.{csv,md}
 ```
+
+`build` takes one model (or list, or `all`) as the unit of work: it reads the variables from `config/models/<model>.yaml`, reuses any existing `data/processed/.../VARIABLE_monthly_zonal.nc`, builds the missing monthly zonal series, computes the per-variable and combined climatology, and prints one JSON report per model (`zonal_built`, `zonal_reused`, `skipped` with reasons, `variables_processed`, `combined_product`, per-variable `checks`, `ok`). Variables without downloaded data, or whose zonal series does not overlap the requested period, are skipped and named in the report instead of failing the run; the run fails only when no variable is processable. Registry mappings are never bypassed: a model must combine `status: ready` with `capabilities.zonal_processing: true`, so explicit `--variable` does not unlock unvalidated coordinate mappings. The per-step commands (`zonal`, `climatology`, `zonal-smoke`, `validate-raw`, `coordinate-audit`, `post-download-audit`) remain available and are labelled advanced in `jumacs --help`.
 
 `scripts/python_setup.sh` loads the Python module, creates/activates `.venv` and installs JuMACS with the test extra; re-run it with `source scripts/python_setup.sh --update` to refresh pip, JuMACS and dependencies.
 
@@ -62,7 +66,7 @@ sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh GEOSCCM
 sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh EMAC
 ```
 
-For WACCM-X, first inspect and plan download, then transfer the selected monthly `_zm.nc` files from JUDAC. Afterward, submit zonal tasks by variable and its climatology. `make inspect`, `make test`, `make download MODEL=...` (plan), `make download-execute MODEL=...`, `make zonal MODEL=...`, `make climatology MODEL=...`, `make coverage MODEL=...`, and `make compare` are shortcuts. The default 1985–2014 reference period is defined only in `config/climatology.yaml`; the Makefile and CLI omit year flags when unset and read that file, and a model YAML may add a `period:` override. `--start-year` and `--end-year` allow any covered inclusive period. The monthly zonal series remain intact.
+For WACCM-X, first inspect and plan download, then transfer the selected monthly `_zm.nc` files from JUDAC. Afterward, submit zonal tasks by variable and its climatology. `make inspect`, `make test`, `make download MODEL=...` (plan), `make download-execute MODEL=...`, `make build MODEL=...`, `make zonal MODEL=...`, `make climatology MODEL=...`, `make coverage MODEL=...`, and `make compare` are shortcuts. The default 1985–2014 reference period is defined only in `config/climatology.yaml`; the Makefile and CLI omit year flags when unset and read that file, and a model YAML may add a `period:` override. `--start-year` and `--end-year` allow any covered inclusive period. The monthly zonal series remain intact.
 
 ## Post-download audit
 
@@ -78,7 +82,7 @@ jumacs post-download-audit --model all  # both stages in one run
 
 ## Products
 
-Each `data/processed/MODEL/.../VARIABLE_monthly_zonal.nc` retains time, latitude, native level, native units, source file names, and model identity. `jumacs climatology --model GEOSCCM` creates `products/climatology/GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc` with one NetCDF group per variable, plus independently readable per-variable NetCDF files. Each group has calendar-month `mean`, population `sigma`, `minimum`, `maximum`, and cellwise `n_years`. Products record source dataset/archive, experiment, coverage, period, native/output units, vertical coordinate, and processing history.
+Each `data/processed/MODEL/.../VARIABLE_monthly_zonal.nc` retains time, latitude, native level, native units, source file names, and model identity. `jumacs climatology --model GEOSCCM` (and the climatology step of `jumacs build`) creates `products/climatology/GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc` plus independently readable per-variable NetCDF files. The combined file is one ordinary NetCDF dataset — no groups — in which every processed variable keeps its own prefixed entries: `<variable>_mean`, `<variable>_sigma`, `<variable>_minimum`, `<variable>_maximum`, `<variable>_n_years`, `<variable>_air_pressure`, and a per-variable level dimension `<variable>_<level>` (for example `o3_plev`). Month and latitude dimensions are shared. Statistics are calendar-month `mean`, population `sigma`, `minimum`, `maximum` and cellwise `n_years`. Combined products record source dataset/archive, experiment, coverage, period, native/output units, vertical coordinate, processing history, the `variables` list, and per-variable provenance attributes; the writer reopens the finished file and refuses it if any processed variable is missing, so a variable can no longer disappear silently. Because this replaces the earlier grouped layout, previously mirrored combined files should be regenerated with `jumacs build`.
 
 `jumacs coverage --model MODEL` writes finite-value-based pressure limits, native geopotential-height ranges (where available), a representative median top height and level count per species to `products/diagnostics/coverage/MODEL/`. `jumacs compare --models GEOSCCM EMAC` writes original model fields, absolute and relative difference on a common pressure grid in the overlapping domain. Relative difference is `100 × (first − second) / second` and is undefined where the second field is zero. Interpolation is in log pressure and never extrapolates. `jumacs evaluate` accepts a separate evaluation NetCDF with the requested field and pressure coordinate, and produces difference, relative difference and RMS; it does not rank or adjust models. Plots from `quicklook`, `trends`, the model atlas and representative comparison maps are diagnostics only.
 
@@ -94,7 +98,7 @@ The compact file is a straightforward month/height/latitude input for a JuMACS-a
 
 `make site` rebuilds `site/index.html` from existing plot catalogs without redrawing the plots. Internal browser links are relative. By default the browser does not link to NetCDF products because `site/` must also work when mirrored by itself. Set `JUMACS_PRODUCT_URL_BASE` during site generation only if those selected compact files are published at that URL.
 
-Run the local mirror **from the notebook Git clone**. It reads the mounted HPC tree at `~/jumount/data/slmet/model_data/jumacs` by default and writes the static browser to the clone's ignored `site/` directory. It also copies exactly five finished 1985–2014 NetCDF products to the clone's ignored `products/climatology/`: the grouped GEOSCCM, EMAC and WACCM-X climatologies and the two compact extensions. Per-variable files and the full monthly zonal series are excluded. The site is an exact mirror; NetCDF files are copied incrementally without deletion.
+Run the local mirror **from the notebook Git clone**. It reads the mounted HPC tree at `~/jumount/data/slmet/model_data/jumacs` by default and writes the static browser to the clone's ignored `site/` directory. It also copies exactly five finished 1985–2014 NetCDF products to the clone's ignored `products/climatology/`: the combined GEOSCCM, EMAC and WACCM-X climatologies and the two compact extensions. Per-variable files and the full monthly zonal series are excluded. The site is an exact mirror; NetCDF files are copied incrementally without deletion.
 
 ```bash
 cd ~/wrk/clim/jumacs

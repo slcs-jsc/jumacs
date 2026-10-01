@@ -95,7 +95,7 @@ def test_evaluation_pressure_coordinate_and_month_overlap():
     assert np.isnan(result.difference.sel(pressure=1000.)).all()
 
 
-def test_climatology_provenance_and_grouped_product(tmp_path, monkeypatch):
+def test_climatology_provenance_and_combined_product(tmp_path, monkeypatch):
     import jumacs.climatology as module
     monkeypatch.setattr(module, "ROOT", tmp_path)
     zonal = tmp_path / "data/processed/GEOSCCM/refD1"; zonal.mkdir(parents=True)
@@ -109,9 +109,11 @@ def test_climatology_provenance_and_grouped_product(tmp_path, monkeypatch):
         assert root.attrs["nominal_reference_year"] == 2000
         assert root.attrs["reference_period_years"] == 30
         assert root.attrs["model"] == "GEOSCCM"
-    with xr.open_dataset(outputs[-1], group="variables/o3") as group:
-        assert group.n_years.sel(month=1).min().item() == 30
-        assert group.attrs["bias_correction"] == "none"
+        assert root.attrs["bias_correction"] == "none"
+        assert root.attrs["variables"] == "o3"
+        assert root.o3_n_years.sel(month=1).min().item() == 30
+        assert root.o3_mean.attrs["source_variable"] == "o3"
+        assert set(root.o3_mean.dims) == {"month", "o3_plev", "lat"}
 
 
 def test_availability_matrix_keeps_models_separate(tmp_path, monkeypatch):
@@ -159,17 +161,19 @@ def test_native_variable_report_separates_mapped_and_native_only(tmp_path, monke
 
 def test_capabilities_gate_commands():
     from jumacs.config import models_with_capability, has_capability
+    from jumacs.build import buildable_model_names
     assert set(models_with_capability("compact_waccmx")) == {"GEOSCCM", "EMAC"}
     assert has_capability("WACCM-X", "zonal_processing") and not has_capability("WACCM-X", "compact_waccmx")
     assert set(models_with_capability("archive_inventory")) == {
         "GEOSCCM", "EMAC", "WACCM-X", "ACCESS-CM2-Chem", "CCSR-NIES-MIROC32", "CESM2-WACCM", "CMAM",
         "CNRM-MOCAGE", "IPSL-CM6A-ATM-LR-REPROBUS", "NIWA-UKCA2", "SOCOL", "UKESM1-StratTrop"}
-    assert set(models_with_capability("zonal_processing")) == {"GEOSCCM", "EMAC", "WACCM-X"}
+    assert {"GEOSCCM", "EMAC", "WACCM-X", "CMAM", "CNRM-MOCAGE", "SOCOL"} <= set(buildable_model_names())
+    assert "MIROC-ES2H" not in buildable_model_names()
     assert not any(has_capability("MIROC-ES2H", cap) for cap in
                    ("archive_inventory", "download", "zonal_processing", "climatology", "compact_waccmx"))
     for stub in ("SOCOL", "CMAM"):
         assert has_capability(stub, "archive_inventory") and has_capability(stub, "download")
-        assert not any(has_capability(stub, cap) for cap in ("zonal_processing", "climatology", "compact_waccmx"))
+        assert not has_capability(stub, "compact_waccmx")
 
 
 def test_compact_rejects_models_without_capability():

@@ -23,10 +23,24 @@ def _model_type(name):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="jumacs")
+    parser = argparse.ArgumentParser(prog="jumacs", description="Normal workflow: inspect, download, build, quicklook. Other commands are advanced developer tools.", epilog="jumacs build --model CMAM --start-year 1985 --end-year 2014 builds every variable configured in config/models/CMAM.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("inspect", "download", "zonal", "climatology", "validate", "coverage", "trends", "quicklook"):
-        p = sub.add_parser(command)
+    build = sub.add_parser("build", help="Build one model end to end: monthly zonal series, per-variable climatology, and a verified combined product (variables come from config/models/<MODEL>.yaml)")
+    build.add_argument("--model", required=True, help="Model name, comma-separated names, or all (every ready model with zonal processing)")
+    build.add_argument("--start-year", type=int)
+    build.add_argument("--end-year", type=int)
+    build.add_argument("--variable", action="append", help="Advanced: restrict to selected variables instead of everything configured")
+    for command, help_text in (
+        ("inspect", "Show registry, archive inventory, and readiness for a model"),
+        ("download", "Plan archive transfers; --execute transfers"),
+        ("zonal", "Advanced: monthly zonal products only (jumacs build does this too)"),
+        ("climatology", "Advanced: climatology products from existing zonal files only (jumacs build does this too)"),
+        ("validate", "Advanced: independent checks of existing zonal products"),
+        ("coverage", "Advanced: time-coverage report of existing zonal products"),
+        ("trends", "Advanced: trend plots from existing zonal products"),
+        ("quicklook", "Pressure-latitude quicklook plots from climatology products"),
+    ):
+        p = sub.add_parser(command, help=help_text)
         p.add_argument("--model", choices=(*model_names(), "all"), required=True)
         if command in ("download", "climatology", "quicklook"):
             p.add_argument("--start-year", type=int)
@@ -70,6 +84,11 @@ def main(argv=None):
     smoke.add_argument("--model", choices=model_names(), required=True)
     smoke.add_argument("--variable", default="temperature")
     args = parser.parse_args(argv)
+    if args.command == "build":
+        from .build import build_models
+        for report in build_models(args.model, args.start_year, args.end_year, args.variable):
+            print(json.dumps(report, indent=2))
+        return
     if args.command == "zonal-smoke":
         from .zonal import zonal_smoke
         report, _ = zonal_smoke(args.model, args.variable)

@@ -43,29 +43,66 @@ def monthly_climatology(data, start_year, end_year):
     return out
 
 
+def combined_variables(name, stats):
+    """Name statistics and levels per variable so one file can hold every species."""
+    levels = {dim: f"{name}_{dim}" for dim in stats.dims if dim not in ("month", "lat")}
+    renamed = stats.rename(levels)
+    renamed = renamed.rename({variable: f"{name}_{variable}" for variable in stats.data_vars})
+    provenance = dict(stats.attrs)
+    for variable in renamed.data_vars:
+        carries_units = variable.endswith(("_mean", "_sigma", "_minimum", "_maximum"))
+        withheld = set() if carries_units else {"source_units", "output_units"}
+        renamed[variable].attrs.update({key: value for key, value in provenance.items() if key not in withheld})
+    return renamed
+
+
+def write_combined(model, start_year, end_year, names, coverage_bounds=()):
+    config = load_config(model)
+    reference = reference_period()["reference_period"]
+    names = sorted(set(names))
+    parts = []
+    for name in names:
+        source = ROOT / config["paths"]["climatology"] / variable_product_name(model, name, start_year, end_year)
+        if not source.exists():
+            raise FileNotFoundError(source)
+        with xr.open_dataset(source) as stats:
+            parts.append(combined_variables(name, stats.load()))
+    combined = xr.merge(parts, join="outer", compat="override")
+    combined.attrs = {"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"],
+        "source_dataset": config["model"]["dataset_uuid"], "source_archive": config["model"]["archive_base"],
+        "climatology_period": f"{start_year}-{end_year}", "reference_period_years": end_year-start_year+1,
+        "nominal_reference_year": reference["nominal_reference_year"], "bias_correction": "none",
+        "trend_correction": "none", "model_combination": "none",
+        "variables": " ".join(names), "variable_count": len(names),
+        "variable_naming": "one field per variable and statistic, named <variable>_<statistic> with <variable>_mean, <variable>_sigma, <variable>_minimum, <variable>_maximum, <variable>_n_years and <variable>_air_pressure; level dimensions are named <variable>_<level>",
+        "vertical_coordinate": "native per-variable", "native_units": "see per-variable field attributes",
+        "output_units": "see per-variable field attributes",
+        "time_coverage": f"{min(coverage_bounds)} to {max(coverage_bounds)}" if coverage_bounds else "",
+        "history": "calendar-month statistics from native-grid monthly zonal time series"}
+    combined_path = ROOT / config["paths"]["climatology"] / product_name(model, start_year, end_year)
+    combined_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = combined_path.with_suffix(".nc.tmp")
+    combined.to_netcdf(temporary, engine="netcdf4")
+    with xr.open_dataset(temporary) as written:
+        missing = [name for name in names if f"{name}_mean" not in written or f"{name}_n_years" not in written]
+    if missing:
+        temporary.unlink()
+        raise RuntimeError(f"Combined climatology lost variables {missing}: {combined_path}")
+    temporary.replace(combined_path)
+    return combined_path
+
+
 def build_climatology(model, start_year, end_year, variables=None):
     config = load_config(model)
     base = ROOT / config["paths"]["zonal"]
     names = [config["variables"].get(v, v) for v in variables] if variables else [p.name.removesuffix("_monthly_zonal.nc") for p in base.glob("*_monthly_zonal.nc")]
     if not names:
         raise FileNotFoundError(f"No zonal files in {base}")
+    names = sorted(set(names))
     outputs = []
     coverage_bounds = []
-    from netCDF4 import Dataset
-    combined = ROOT / config["paths"]["climatology"] / product_name(model, start_year, end_year)
-    combined.parent.mkdir(parents=True, exist_ok=True)
-    temporary_combined = combined.with_suffix(".nc.tmp")
-    if temporary_combined.exists():
-        temporary_combined.unlink()
     reference = reference_period()["reference_period"]
-    with Dataset(temporary_combined, "w") as root:
-        root.setncatts({"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"],
-            "source_dataset": config["model"]["dataset_uuid"], "source_archive": config["model"]["archive_base"],
-            "climatology_period": f"{start_year}-{end_year}", "reference_period_years": end_year-start_year+1,
-            "nominal_reference_year": reference["nominal_reference_year"], "bias_correction": "none",
-            "trend_correction": "none", "model_combination": "none",
-            "history": "calendar-month statistics from native-grid monthly zonal time series"})
-    for name in sorted(set(names)):
+    for name in names:
         path = base / f"{name}_monthly_zonal.nc"
         if not path.exists():
             raise FileNotFoundError(path)
@@ -88,13 +125,6 @@ def build_climatology(model, start_year, end_year, variables=None):
             temporary = dest.with_suffix(".nc.tmp")
             stats.to_netcdf(temporary, engine="netcdf4")
             temporary.replace(dest)
-            stats.to_netcdf(temporary_combined, engine="netcdf4", mode="a", group=f"variables/{name}")
             outputs.append(dest)
-    with Dataset(temporary_combined, "a") as root:
-        root.time_coverage = f"{min(coverage_bounds)} to {max(coverage_bounds)}"
-        root.native_units = "see per-variable groups"
-        root.output_units = "see per-variable groups"
-        root.vertical_coordinate = "native per-variable; see groups"
-    temporary_combined.replace(combined)
-    outputs.append(combined)
+    outputs.append(write_combined(model, start_year, end_year, names, coverage_bounds))
     return outputs

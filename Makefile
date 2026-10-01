@@ -5,7 +5,7 @@ START ?=
 END ?=
 PERIOD = $(if $(START),--start-year $(START)) $(if $(END),--end-year $(END))
 
-.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute zonal climatology compact compare validate coverage trends quicklook site mirror-local mirror-web publish-data
+.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute build zonal climatology compact compare validate coverage trends quicklook site mirror-local mirror-web publish-data
 
 test:
 	@PYTHONPATH="src:$(PYTHONPATH)" $(PYTHON) -m pytest -q
@@ -24,6 +24,8 @@ download:
 download-plan: download
 download-execute:
 	@$(CLI) download --model $(MODEL) $(PERIOD) --execute
+build:
+	@$(CLI) build --model $(MODEL) $(PERIOD)
 zonal:
 	@$(CLI) zonal --model $(MODEL)
 climatology:
