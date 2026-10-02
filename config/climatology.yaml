@@ -10,131 +10,51 @@ reference_period:
 # zonal fields are regridded onto these levels before the statistics are
 # computed, so all species and models share one vertical axis.
 #
-# The grid is uniform in log10(pressure) with ten levels per decade, so adjacent
-# levels differ by a factor of 10**0.1 (about 1.26). Logarithmic spacing is the
-# appropriate choice because pressure spans ten decades from the surface to the
-# lower thermosphere, and a constant relative spacing keeps the resolution
-# meaningful across that range. At a representative atmospheric scale height of
-# about 7 km the 1.26 pressure ratio corresponds to roughly 1.6 km of vertical
-# spacing, which preserves the vertical structure that JURASSIC radiative
-# transfer/retrieval and MPTRAC transport/chemistry applications need while
-# remaining modest in compute and storage for monthly zonal climatologies. It is
-# a common application grid, not a claim that every atmospheric layer is fully
-# resolved; native structure stays in the model-native zonal intermediates.
-# Extend or coarsen the grid by editing this list only.
+# Only the endpoints and the target resolution are configured; config.vertical_grid()
+# derives the levels, so there is one definition and no long list to keep in step.
+#
+# The grid is uniform in log10(pressure) with about sixteen intervals per decade,
+# so adjacent levels differ by a constant factor of about 0.866 and the level count
+# follows from the span instead of being written down: 1e5 Pa to 0.002 Pa covers
+# 7.70 decades, which gives 123 intervals and 124 levels, or 15.98 per decade.
+# Logarithmic spacing is the appropriate choice because pressure spans nearly eight
+# decades from the surface to the model top, and a constant relative spacing keeps
+# the resolution meaningful across that range. At a representative atmospheric scale
+# height of about 7 km that step is close to 1 km of altitude, which preserves the
+# vertical structure that JURASSIC radiative transfer/retrieval and MPTRAC
+# transport/chemistry applications need while 124 levels remain modest in compute
+# and storage for monthly zonal climatologies. It is a common application grid, not
+# a claim that every atmospheric layer is fully resolved; native structure stays in
+# the model-native zonal intermediates.
+#
+# The top level is 0.002 Pa, roughly 120 km in a standard atmosphere. Pressure is
+# authoritative: the equivalent altitude varies with temperature, latitude and
+# season, so no altitude is configured and none is written into the products.
+# Change max_pressure_pa, min_pressure_pa or intervals_per_decade and rebuild the
+# climatologies; a product written on another axis is refused, never resampled.
 vertical_grid:
   coordinate: pressure
   units: Pa
   interpolation: linear_log_pressure
   extrapolation: none
-  description: log-uniform grid, ten levels per decade (factor 10**0.1), 1e5 Pa (surface) to 1e-5 Pa (lower thermosphere)
-  levels:
-    - 100000
-    - 79432.8234724
-    - 63095.734448
-    - 50118.7233627
-    - 39810.7170553
-    - 31622.7766017
-    - 25118.8643151
-    - 19952.6231497
-    - 15848.9319246
-    - 12589.2541179
-    - 10000
-    - 7943.28234724
-    - 6309.5734448
-    - 5011.87233627
-    - 3981.07170553
-    - 3162.27766017
-    - 2511.88643151
-    - 1995.26231497
-    - 1584.89319246
-    - 1258.92541179
-    - 1000
-    - 794.328234724
-    - 630.95734448
-    - 501.187233627
-    - 398.107170553
-    - 316.227766017
-    - 251.188643151
-    - 199.526231497
-    - 158.489319246
-    - 125.892541179
-    - 100
-    - 79.4328234724
-    - 63.095734448
-    - 50.1187233627
-    - 39.8107170553
-    - 31.6227766017
-    - 25.1188643151
-    - 19.9526231497
-    - 15.8489319246
-    - 12.5892541179
-    - 10
-    - 7.94328234724
-    - 6.3095734448
-    - 5.01187233627
-    - 3.98107170553
-    - 3.16227766017
-    - 2.51188643151
-    - 1.99526231497
-    - 1.58489319246
-    - 1.25892541179
-    - 1
-    - 0.794328234724
-    - 0.63095734448
-    - 0.501187233627
-    - 0.398107170553
-    - 0.316227766017
-    - 0.251188643151
-    - 0.199526231497
-    - 0.158489319246
-    - 0.125892541179
-    - 0.1
-    - 0.0794328234724
-    - 0.063095734448
-    - 0.0501187233627
-    - 0.0398107170553
-    - 0.0316227766017
-    - 0.0251188643151
-    - 0.0199526231497
-    - 0.0158489319246
-    - 0.0125892541179
-    - 0.01
-    - 0.00794328234724
-    - 0.0063095734448
-    - 0.00501187233627
-    - 0.00398107170553
-    - 0.00316227766017
-    - 0.00251188643151
-    - 0.00199526231497
-    - 0.00158489319246
-    - 0.00125892541179
-    - 0.001
-    - 0.000794328234724
-    - 0.00063095734448
-    - 0.000501187233627
-    - 0.000398107170553
-    - 0.000316227766017
-    - 0.000251188643151
-    - 0.000199526231497
-    - 0.000158489319246
-    - 0.000125892541179
-    - 0.0001
-    - 0.0000794328234724
-    - 0.000063095734448
-    - 0.0000501187233627
-    - 0.0000398107170553
-    - 0.0000316227766017
-    - 0.0000251188643151
-    - 0.0000199526231497
-    - 0.0000158489319246
-    - 0.0000125892541179
-    - 0.00001
+  max_pressure_pa: 100000.0
+  min_pressure_pa: 0.002
+  intervals_per_decade: 16
+  description: log-uniform grid, about sixteen levels per decade (factor 10**0.0626), 1e5 Pa (surface) to 0.002 Pa (about 120 km)
+
+# Vertical transition width for the planned CCMI + WACCM-X combination. Widths are
+# counted in common-grid levels rather than kilometres, so they keep their meaning
+# when the pressure grid changes: 12 levels span 11 intervals, about 11 km on the
+# ~1 km grid. No combination is performed yet; this reserves the settings that step
+# will read, and per-variable overrides stay empty until a variable needs one.
+extension:
+  transition_levels: 12
+  transition_levels_by_variable: {}
 
 # Diagnostics only: the coverage matrix never changes products or interpolation.
 coverage:
-  # Descriptive label only: a field usable on at least this fraction of the 101 pressure levels is
-  # called broadly usable. It is not a condition for overlap or for extension by WACCM-X.
+  # Descriptive label only: a field usable on at least this fraction of the common-grid pressure
+  # levels is called broadly usable. It is not a condition for overlap or for extension by WACCM-X.
   usable_level_fraction: 0.5
   # A pressure level is usable where at least this fraction of its months and latitudes are finite.
   # This is the threshold behind the usable ranges, the overlap, and the extension decision. The reported

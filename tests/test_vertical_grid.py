@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -19,6 +21,7 @@ def level_near(pressure_pa):
 
 MIDDLE = level_near(3162.0)
 ABOVE_TOP = level_near(562.3)
+INSIDE = level_near(1e4)
 
 
 def profile(levels, periods=12):
@@ -46,29 +49,47 @@ def dataset(name, values, pressure, coords=None, pressure_name="air_pressure", l
     return data
 
 
-def test_common_grid_is_explicit_log_uniform_and_monotonic():
+def test_common_grid_has_exact_endpoints_and_a_resolution_derived_length():
     levels = np.asarray(GRID["levels"], float)
     assert GRID["coordinate"] == "pressure" and GRID["units"] == "Pa"
     assert GRID["interpolation"] == "linear_log_pressure" and GRID["extrapolation"] == "none"
-    assert levels.size == 101 and levels[0] == 1e5 and levels[-1] == pytest.approx(1e-5)
-    assert all(a > b for a, b in zip(levels, levels[1:]))
+    assert levels[0] == 1e5 and levels[-1] == 0.002
+    assert all(a > b for a, b in zip(levels, levels[1:])) and levels.min() > 0
+    assert levels.dtype == np.float64 or all(isinstance(level, float) for level in levels)
     exponents = np.log10(levels)
-    assert exponents[0] == 5.0 and exponents[-1] == pytest.approx(-5.0)
+    assert exponents[0] == 5.0 and exponents[-1] == pytest.approx(np.log10(0.002))
     steps = np.diff(exponents)
-    assert np.allclose(steps, -0.1, rtol=0.0, atol=1e-9)
-    assert np.allclose(1.0 / -steps, 10.0, rtol=1e-8)
-    assert np.allclose(levels[:-1] / levels[1:], 10 ** 0.1, rtol=1e-9)
-    for decade in (1e4, 1e3, 1e2, 1.0, 1e-2, 1e-3, 1e-4):
-        assert any(abs(level - decade) <= 1e-9 * decade for level in levels)
+    assert np.allclose(steps, GRID["delta_log10_pressure"], rtol=0.0, atol=1e-12)
+    assert np.allclose(levels[:-1] / levels[1:], 10 ** -GRID["delta_log10_pressure"], rtol=1e-9)
+    assert np.allclose(levels[1:] / levels[:-1], 10 ** GRID["delta_log10_pressure"], rtol=1e-9)
+
+
+def test_level_count_and_spacing_follow_the_configured_resolution_not_a_written_down_length():
+    settings = config_module.reference_period()["vertical_grid"]
+    levels = np.asarray(GRID["levels"], float)
+    decades = np.log10(settings["max_pressure_pa"] / settings["min_pressure_pa"])
+    assert settings["max_pressure_pa"] == 100000.0 and settings["min_pressure_pa"] == 0.002
+    assert GRID["intervals"] == round(decades * settings["intervals_per_decade"])
+    assert levels.size == GRID["intervals"] + 1
+    assert 15.0 <= GRID["intervals"] / decades <= 17.0
+    altitude_step_km = 7.0 * np.log(10.0) * abs(GRID["delta_log10_pressure"])
+    assert 0.9 <= altitude_step_km <= 1.1
+    assert "levels" not in settings
 
 
 @pytest.mark.parametrize("section,message", [
-    ({"units": "hPa", "levels": [1e5, 1e3]}, "units must be Pa"),
-    ({"levels": [1e5, 1e4, 1e5]}, "strictly monotonic"),
-    ({"levels": [1e5, 0.0]}, "positive"),
-    ({"levels": [1e5]}, "at least two"),
-    ({"interpolation": "linear", "levels": [1e5, 1e3]}, "linear_log_pressure"),
-    ({"extrapolation": "linear", "levels": [1e5, 1e3]}, "extrapolation must be none"),
+    ({"units": "hPa", "max_pressure_pa": 1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 10}, "units must be Pa"),
+    ({"interpolation": "linear", "max_pressure_pa": 1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 10},
+     "linear_log_pressure"),
+    ({"extrapolation": "linear", "max_pressure_pa": 1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 10},
+     "extrapolation must be none"),
+    ({"max_pressure_pa": 1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 10, "levels": [1e5, 1e3]},
+     "no longer accepted"),
+    ({"max_pressure_pa": 1e5, "min_pressure_pa": 1e3}, "missing intervals_per_decade"),
+    ({"max_pressure_pa": 1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 0}, "at least 1"),
+    ({"max_pressure_pa": 1e3, "min_pressure_pa": 1e5, "intervals_per_decade": 10}, "must be the larger"),
+    ({"max_pressure_pa": -1e5, "min_pressure_pa": 1e3, "intervals_per_decade": 10}, "positive"),
+    ({"max_pressure_pa": 1e5, "min_pressure_pa": 0.0, "intervals_per_decade": 10}, "positive"),
     ({}, "needs a vertical_grid section"),
 ])
 def test_common_grid_configuration_is_validated(monkeypatch, section, message):
@@ -77,11 +98,18 @@ def test_common_grid_configuration_is_validated(monkeypatch, section, message):
         config_module.vertical_grid()
 
 
+def test_a_written_down_level_list_is_rejected_rather_than_silently_ignored(monkeypatch):
+    monkeypatch.setattr(config_module, "reference_period",
+                        lambda: {"vertical_grid": {"levels": list(np.logspace(5, -5, 101))}})
+    with pytest.raises(ValueError, match="intervals_per_decade"):
+        config_module.vertical_grid()
+
+
 def test_pressure_reporting_keeps_significant_digits_at_both_ends_of_the_grid():
     levels = np.asarray(GRID["levels"], float)
-    assert pressure_report(levels.min()) == 1e-05 and pressure_report(levels.max()) == 100000.0
-    assert f"{pressure_report(levels.min()):g}" == "1e-05"
-    assert pressure_report(np.float64(79432.8234724)) == 79432.8
+    assert pressure_report(levels.min()) == 0.002 and pressure_report(levels.max()) == 100000.0
+    assert f"{pressure_report(levels.min()):g}" == "0.002"
+    assert pressure_report(np.float64(12345.6789)) == 12345.7
     assert pressure_report(101325.2646) == 101325.0
     assert pressure_report(0.078812345) == 0.0788123
 
@@ -111,9 +139,11 @@ def test_interpolation_precedes_the_statistics():
     native_mean = ds.o3.mean("time")
     pressure_mean = ds.air_pressure.mean("time")
     after_the_mean = interpolate_log_pressure(native_mean, pressure_mean, GRID["levels"]).sel(pressure=MIDDLE).isel(lat=0).item()
-    assert january == pytest.approx(1.5, rel=1e-4)
-    assert february == pytest.approx(0.5, rel=1e-4)
-    assert after_the_mean == pytest.approx(1.2404, abs=2e-3)
+    # Expected values follow the grid: the probe level sits MIDDLE_OFFSET decades below 1e4.
+    middle_offset = float(4.0 - np.log10(MIDDLE))
+    assert january == pytest.approx(1.0 + middle_offset, rel=1e-4)
+    assert february == pytest.approx(middle_offset, rel=1e-4)
+    assert after_the_mean == pytest.approx(1.0 + float(np.log10(5500.0) - np.log10(MIDDLE)), abs=2e-3)
     assert abs(january - after_the_mean) > 0.2 and abs(february - after_the_mean) > 0.2
     assert abs(climatology["mean"].sel(pressure=MIDDLE).mean().item() - after_the_mean) > 0.2
     assert climatology["n_years"].sel(month=1, pressure=MIDDLE).item() == 1
@@ -128,7 +158,7 @@ def test_targets_outside_a_profile_stay_nan_and_count_zero_years():
     assert np.isnan(mean).all()
     assert climatology["n_years"].values[:, above_top, :].max() == 0
     assert climatology["mean"].sel(month=1, pressure=1e5).item() == pytest.approx(0.0)
-    assert climatology["n_years"].sel(month=1, pressure=1e3).item() == 1
+    assert climatology["n_years"].sel(month=1, pressure=INSIDE).item() == 1
     assert climatology["n_years"].sel(month=1, pressure=ABOVE_TOP).item() == 0
 
 
@@ -153,7 +183,8 @@ def test_broken_pressure_values_are_dropped_not_interpolated():
     ds = dataset("o3", [[[0.], [1.], [2.]], [[5.], [5.], [5.]]], pressure)
     field, provenance = on_common_grid(ds, "o3", 2000, 2000, GRID)
     climatology = monthly_climatology(field, 2000, 2000)
-    assert climatology["mean"].sel(month=1, pressure=MIDDLE).item() == pytest.approx(1.5, rel=1e-4)
+    assert climatology["mean"].sel(month=1, pressure=MIDDLE).item() == pytest.approx(
+        1.0 + float(4.0 - np.log10(MIDDLE)), rel=1e-4)
     assert climatology["n_years"].sel(month=1, pressure=MIDDLE).item() == 1
     assert provenance["native_pressure_min_pa"] == 1000.0
     assert provenance["native_pressure_max_pa"] == 100000.0
@@ -185,7 +216,8 @@ def test_two_dimensional_fields_share_the_three_dimensional_product(tmp_path, mo
         cf.assert_product(ds, names=("o3", "trop"), grid=GRID)
         assert set(ds.o3_mean.dims) == {"time", "pressure", "lat"}
         assert set(ds.trop_mean.dims) == {"time", "lat"}
-        assert ds.sizes["pressure"] == 101 and ds.vertical_level_count == len(GRID["levels"]) == 101
+        assert ds.sizes["pressure"] == ds.vertical_level_count == len(GRID["levels"])
+        assert float(ds.pressure.values[0]) == 1e5 and float(ds.pressure.values[-1]) == 0.002
         assert ds.o3_mean.attrs["native_pressure_min_pa"] == 1000.0
         assert ds.attrs["vertical_coordinate"].startswith("pressure (Pa)")
         assert not [dim for dim in ds.dims if dim not in ("time", "pressure", "lat", cf.BOUNDS_DIMENSION)]
@@ -216,3 +248,21 @@ def test_product_refuses_per_variable_vertical_dimensions():
              for name in ("o3", "br")]
     with pytest.raises(RuntimeError, match="per-variable vertical dimensions"):
         assemble_product("CMAM", 2000, 2001, parts)
+
+
+def test_transition_widths_are_counted_in_common_grid_levels():
+    extension = config_module.extension_settings()
+    assert extension["transition_levels"] == 12
+    assert extension["transition_levels_by_variable"] == {}
+    span_km = 7.0 * abs(GRID["delta_log10_pressure"]) * (extension["transition_levels"] - 1) * math.log(10.0)
+    assert 10.0 <= span_km <= 12.0
+
+
+def test_a_per_variable_transition_width_is_configuration_only(monkeypatch):
+    monkeypatch.setattr(config_module, "reference_period",
+                        lambda: {"extension": {"transition_levels": 12,
+                                               "transition_levels_by_variable": {"br": 20}}})
+    assert config_module.extension_settings()["transition_levels_by_variable"] == {"br": 20}
+    monkeypatch.setattr(config_module, "reference_period", lambda: {"extension": {"transition_levels": 1}})
+    with pytest.raises(ValueError, match="at least 2"):
+        config_module.extension_settings()

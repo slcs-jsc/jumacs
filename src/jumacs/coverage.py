@@ -247,7 +247,9 @@ def product_inventory(model, start_year, end_year, sample_fraction):
             assert_product(ds, names=tuple(stems), grid=grid)
         except ProductProblem as error:
             raise CoverageMatrixProblem(f"{model}: {path.name} does not meet the product contract: {error}; if the "
-                                        "product predates the single-file CF-1.13 layout, rebuild it with jumacs build") from error
+                                        "product predates the single-file CF-1.13 layout or the configured common "
+                                        "pressure grid, rebuild it with jumacs climatology (the monthly zonal "
+                                        "intermediates are reused, not re-derived)") from error
         fields = {stem: product_field_coverage(ds, stem + PRODUCT_MEAN_SUFFIX, grid["coordinate"], sample_fraction)
                   for stem in stems}
     return {"path": str(path), "fields": fields}

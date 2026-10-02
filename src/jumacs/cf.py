@@ -240,9 +240,11 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
             expected_levels = np.asarray(grid["levels"], float)
             if pressure.size != expected_levels.size:
                 problems.append(f"{coordinate} has {pressure.size} levels, the configured common grid has "
-                                f"{expected_levels.size}")
+                                f"{expected_levels.size}; the climatology was built on another vertical grid and "
+                                "must be rebuilt with jumacs climatology")
             elif not np.allclose(pressure.values, expected_levels):
-                problems.append(f"{coordinate} is not the configured common grid")
+                problems.append(f"{coordinate} is not the configured common grid; the climatology was built on "
+                                "another vertical grid and must be rebuilt with jumacs climatology")
     if "lat" not in ds.coords:
         problems.append("lat is missing")
     else:

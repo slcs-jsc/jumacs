@@ -9,7 +9,8 @@ from jumacs import cf, config, coverage
 START, END = 1985, 2014
 LATS = (-45.0, 0.0, 45.0)
 SAMPLE, LEVEL = 0.9, 0.5
-FULL = (0, 101)
+LEVEL_COUNT = len(config.vertical_grid()["levels"])
+FULL = (0, LEVEL_COUNT)
 
 
 def levels():
@@ -87,7 +88,7 @@ def test_an_overlapping_model_that_stops_lower_is_an_extension_candidate(workspa
     assert ozone["extension_status"] == "extension_candidate"
     assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[69])
     assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[0])
-    assert ozone["waccmx_min_usable_pressure_pa"] == pytest.approx(grid[100])
+    assert ozone["waccmx_min_usable_pressure_pa"] == pytest.approx(grid[-1])
     assert ozone["overlap_level_count"] == 70
     assert ozone["overlap_min_pressure_pa"] == pytest.approx(grid[69])
     assert ozone["overlap_max_pressure_pa"] == pytest.approx(grid[0])
@@ -174,7 +175,7 @@ def test_overlap_is_taken_from_the_masks_so_internal_gaps_stay_visible(workspace
     assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[0])
     assert ozone["overlap_level_count"] == 41
     assert ozone["extension_status"] == "extension_candidate"
-    assert ozone["level_finite_fractions"].count(0.0) == 60
+    assert ozone["level_finite_fractions"].count(0.0) == LEVEL_COUNT - 41
 
 
 def test_a_level_needs_most_of_its_samples_before_it_counts(workspace):
@@ -272,10 +273,24 @@ def test_a_product_on_another_pressure_grid_is_refused(workspace):
         coverage.product_inventory("CMAM", START, END, SAMPLE)
 
 
+def test_a_product_on_the_previous_101_level_grid_demands_a_rebuild(workspace):
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, grid_levels=np.logspace(5, -5, 101))
+    with pytest.raises(coverage.CoverageMatrixProblem, match="must be rebuilt with jumacs climatology"):
+        coverage.product_inventory("CMAM", START, END, SAMPLE)
+
+
+def test_a_product_on_the_previous_grid_is_rejected_level_by_level(workspace):
+    previous = np.logspace(5, -5, 101)
+    path = write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, grid_levels=previous)
+    with xr.open_dataset(path, decode_cf=False) as ds:
+        with pytest.raises(cf.ProductProblem, match="the configured common grid"):
+            cf.assert_product(ds, names=("o3",), grid=config.vertical_grid())
+
+
 def test_an_older_grouped_product_is_refused_rather_than_read(workspace):
     path = write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}})
     xr.load_dataset(path).drop_vars("climatology_bounds").to_netcdf(path)
-    with pytest.raises(coverage.CoverageMatrixProblem, match="climatology_bounds.*jumacs build"):
+    with pytest.raises(coverage.CoverageMatrixProblem, match="climatology_bounds.*jumacs climatology"):
         coverage.product_inventory("CMAM", START, END, SAMPLE)
 
 
@@ -294,7 +309,7 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     assert ozone["max_valid_pressure_pa"] == "100000.0" and ozone["waccmx_max_valid_pressure_pa"] == "100000.0"
     assert float(ozone["min_usable_pressure_pa"]) == pytest.approx(levels()[69])
     assert float(ozone["overlap_min_pressure_pa"]) == pytest.approx(levels()[69])
-    assert float(ozone["waccmx_min_usable_pressure_pa"]) == pytest.approx(levels()[100])
+    assert float(ozone["waccmx_min_usable_pressure_pa"]) == pytest.approx(levels()[-1])
     assert ozone["extension_status"] == "extension_candidate"
     assert methane["extension_status"] == "no_waccmx_variable"
     assert surface["extension_status"] == "not_applicable" and surface["levels_usable"] == ""
@@ -316,7 +331,7 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     assert "| CMAM | O3 |" in markdown
     assert "| Model | Variable | CCMI range | WACCM-X range | Usable overlap | Extends upward | Status |" in markdown
     assert "descriptive" in markdown and "1000 hPa counts" in markdown
-    assert "1000 hPa" in markdown and "1e-07 hPa" in markdown and "no blending" in markdown
+    assert "1000 hPa" in markdown and "2e-05 hPa" in markdown and "no blending" in markdown
     assert markdown.count("| --- | --- | --- | --- | --- | --- | --- |") == 2
     assert "Mapped but absent from the WACCM-X product: CH4" in markdown
     assert "Two-dimensional, so no vertical extension applies: surface_pressure" in markdown
