@@ -5,6 +5,7 @@ import xarray as xr
 from .config import ROOT, load_config, is_waccmx
 from .reader import open_source, source_files
 from .coordinates import hybrid_pressure
+from .vertical import pressure_report
 
 
 def zonal_mean(ds, variable, longitude="lon", source_kind=None):
@@ -80,8 +81,8 @@ def zonal_smoke(model, variable):
         if profile.size:
             diffs = np.diff(profile)
             report["pressure_units"] = out["air_pressure"].attrs.get("units")
-            report["pressure_min_pa"] = round(float(profile.min()), 3)
-            report["pressure_max_pa"] = round(float(profile.max()), 3)
+            report["pressure_min_pa"] = pressure_report(profile.min())
+            report["pressure_max_pa"] = pressure_report(profile.max())
             report["pressure_monotonic_decreasing"] = bool(profile[0] >= profile[-1])
             report["pressure_decreasing_fraction"] = round(float((diffs < 0).mean()), 4)
             report["pressure_plausible"] = bool(profile.max() <= 120000.0 and profile.min() > 0.0 and profile.max() >= 1000.0)

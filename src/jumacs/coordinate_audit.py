@@ -10,6 +10,7 @@ import re
 
 from .config import ROOT, load_config, model_metadata, registry, is_waccmx
 from .coordinates import formula_terms
+from .netcdf import open_cftime_dataset
 from .raw_validation import select_representatives, _manifest
 
 COORDINATE_AUDIT_COLUMNS = ["model", "status", "families", "horizontal_grid", "vertical_coordinate",
@@ -298,12 +299,11 @@ def audit_model(model, root=ROOT):
         return row
     representatives, why = select_representatives(model, present, root)
     row["reasons"].extend(f"selected:{w}" for w in why)
-    import xarray as xr
     horizontals, verticals, times, grids, vtypes = [], [], [], set(), set()
     for record in representatives:
         local = root / record["local_path"]
         try:
-            with xr.open_dataset(local, decode_times=True, use_cftime=True) as ds:
+            with open_cftime_dataset(local) as ds:
                 native = record["variable"]
                 if native not in ds:
                     mapped = config.get("variables", {}).get(native, native)

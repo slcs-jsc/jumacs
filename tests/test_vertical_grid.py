@@ -7,7 +7,7 @@ from jumacs import cf
 from jumacs.climatology import (MissingPressureCoordinate, assemble_product, build_climatology,
                                 monthly_climatology, on_common_grid, product_name, variable_statistics)
 from jumacs.config import load_config, vertical_grid
-from jumacs.vertical import interpolate_log_pressure, native_pressure, regrid_to_common_grid
+from jumacs.vertical import interpolate_log_pressure, native_pressure, pressure_report, regrid_to_common_grid
 
 GRID = vertical_grid()
 
@@ -75,6 +75,15 @@ def test_common_grid_configuration_is_validated(monkeypatch, section, message):
     monkeypatch.setattr(config_module, "reference_period", lambda: {"vertical_grid": section})
     with pytest.raises(ValueError, match=message):
         config_module.vertical_grid()
+
+
+def test_pressure_reporting_keeps_significant_digits_at_both_ends_of_the_grid():
+    levels = np.asarray(GRID["levels"], float)
+    assert pressure_report(levels.min()) == 1e-05 and pressure_report(levels.max()) == 100000.0
+    assert f"{pressure_report(levels.min()):g}" == "1e-05"
+    assert pressure_report(np.float64(79432.8234724)) == 79432.8
+    assert pressure_report(101325.2646) == 101325.0
+    assert pressure_report(0.078812345) == 0.0788123
 
 
 def test_native_pressure_recovers_hybrid_and_fixed_levels():

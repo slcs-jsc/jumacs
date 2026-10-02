@@ -236,8 +236,13 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
             problems.append(f"{coordinate} must be air_pressure in Pa")
         if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
             problems.append(f"{coordinate} must carry positive=down and axis=Z")
-        if grid.get("levels") is not None and not np.allclose(pressure.values, np.asarray(grid["levels"], float)):
-            problems.append(f"{coordinate} is not the configured common grid")
+        if grid.get("levels") is not None:
+            expected_levels = np.asarray(grid["levels"], float)
+            if pressure.size != expected_levels.size:
+                problems.append(f"{coordinate} has {pressure.size} levels, the configured common grid has "
+                                f"{expected_levels.size}")
+            elif not np.allclose(pressure.values, expected_levels):
+                problems.append(f"{coordinate} is not the configured common grid")
     if "lat" not in ds.coords:
         problems.append("lat is missing")
     else:

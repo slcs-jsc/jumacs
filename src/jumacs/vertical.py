@@ -10,6 +10,12 @@ PRESSURE_ATTRS = {"standard_name": "air_pressure", "units": "Pa", "positive": "d
                   "long_name": "air pressure on the common JuMACS pressure grid"}
 
 
+def pressure_report(value):
+    """Pressure in Pa for reports and attributes: significant digits, never a rounded 0.0."""
+    number = float(value)
+    return float(f"{number:.6g}")
+
+
 def vertical_dimension(field, pressure=None):
     """The native vertical dimension of a field, checked against the pressure array."""
     candidates = [dim for dim in field.dims if dim not in NON_VERTICAL]

@@ -4,6 +4,7 @@ import cftime
 import xarray as xr
 
 from .config import load_config, is_waccmx
+from .netcdf import open_cftime_dataset
 
 
 def open_source(path, model, variable):
@@ -15,7 +16,7 @@ def open_source(path, model, variable):
         valid_name = "_refD1_" in path.name and f"_{config['model']['archive_model']}_" in path.name
     if not valid_name:
         raise ValueError(f"Unexpected model or experiment in {path.name}")
-    ds = xr.open_dataset(path, decode_times=True, use_cftime=True)
+    ds = open_cftime_dataset(path)
     if name not in ds:
         ds.close(); raise KeyError(f"{name} absent from {path.name}")
     if is_waccmx(config):

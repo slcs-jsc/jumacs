@@ -83,7 +83,34 @@ def main(argv=None):
     smoke = sub.add_parser("zonal-smoke", help="Process one time slice of one real raw file to validate a model's coordinate mapping end-to-end (writes only products/diagnostics/zonal_smoke)")
     smoke.add_argument("--model", choices=model_names(), required=True)
     smoke.add_argument("--variable", default="temperature")
+    coverage_matrix_command = sub.add_parser(
+        "coverage-matrix",
+        help="Per-model WACCM-X extension readiness from existing climatology products: where each CCMI model is usable, where WACCM-X is usable, and where the two overlap (reads products only, writes products/comparison/coverage_matrix.csv, .md, .json)",
+    )
+    coverage_matrix_command.add_argument(
+        "--model",
+        default="all",
+        help="Model names or slugs, comma-separated; all (every model with a product in the period); or auto (ready CCMI models with a product). WACCM-X is the reference and is needed in every selection. Default: all",
+    )
+    coverage_matrix_command.add_argument("--start-year", type=int, help="Product period start year (default: the configured reference period)")
+    coverage_matrix_command.add_argument("--end-year", type=int, help="Product period end year (default: the configured reference period)")
+    coverage_matrix_command.add_argument(
+        "--usable-level-fraction",
+        type=float,
+        help="Fraction of pressure levels a field must be usable on to be labelled broadly usable; a descriptive label only, not a condition for overlap or extension (default: the configured coverage.usable_level_fraction)",
+    )
+    coverage_matrix_command.add_argument(
+        "--usable-sample-fraction",
+        type=float,
+        help="Minimum fraction of the months and latitudes of a pressure level that must be finite for that level to count (default: the configured coverage.usable_sample_fraction)",
+    )
     args = parser.parse_args(argv)
+    if args.command == "coverage-matrix":
+        from .coverage import coverage_matrix_command as run_coverage_matrix
+
+        print(run_coverage_matrix(args.model, args.usable_level_fraction, args.usable_sample_fraction,
+                                  args.start_year, args.end_year))
+        return
     if args.command == "build":
         from .build import build_models
         for report in build_models(args.model, args.start_year, args.end_year, args.variable):

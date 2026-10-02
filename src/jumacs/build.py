@@ -5,8 +5,10 @@ import xarray as xr
 from . import cf
 from .archive import discovered_zm_variables
 from .climatology import build_climatology
+from .netcdf import open_cftime_dataset
 from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names, vertical_grid
 from .zonal import build_zonal
+from .vertical import pressure_report
 
 
 def buildable_model_names():
@@ -35,7 +37,7 @@ def configured_variables(model, config):
 
 
 def coverage_years(path):
-    with xr.open_dataset(path, use_cftime=True) as ds:
+    with open_cftime_dataset(path) as ds:
         return int(ds.time.values[0].year), int(ds.time.values[-1].year)
 
 
@@ -85,8 +87,8 @@ def build_model(model, start_year=None, end_year=None, variables=None):
         if coordinate in product.coords:
             levels = np.asarray(product[coordinate].values, float)
             report["vertical_grid"] = {"coordinate": coordinate, "level_count": int(levels.size),
-                                       "pressure_min_pa": round(float(levels.min()), 4),
-                                       "pressure_max_pa": round(float(levels.max()), 4),
+                                       "pressure_min_pa": pressure_report(levels.min()),
+                                       "pressure_max_pa": pressure_report(levels.max()),
                                        "monotonic": bool(np.all(np.diff(levels) <= 0) or np.all(np.diff(levels) >= 0)),
                                        "interpolation": "linear_log_pressure", "extrapolation": "none"}
         for name in available:
@@ -115,8 +117,8 @@ def check_variable(name, combined):
             check["error"] = f"three-dimensional field is not on the common '{coordinate}' grid: {check['dimensions']}"
             return check
         pressure = np.asarray(combined[coordinate].values, float)
-        check["pressure_min_pa"] = round(float(pressure.min()), 4)
-        check["pressure_max_pa"] = round(float(pressure.max()), 4)
+        check["pressure_min_pa"] = pressure_report(pressure.min())
+        check["pressure_max_pa"] = pressure_report(pressure.max())
         check["pressure_monotonic"] = bool(np.all(np.diff(pressure) <= 0) or np.all(np.diff(pressure) >= 0))
         check["pressure_plausible"] = bool(pressure.max() <= 120000.0 and pressure.min() > 0.0)
         check["finite_fraction_on_common_grid"] = check["finite_fraction"]

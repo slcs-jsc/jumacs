@@ -130,3 +130,16 @@ vertical_grid:
     - 0.0000158489319246
     - 0.0000125892541179
     - 0.00001
+
+# Diagnostics only: the coverage matrix never changes products or interpolation.
+coverage:
+  # Descriptive label only: a field usable on at least this fraction of the 101 pressure levels is
+  # called broadly usable. It is not a condition for overlap or for extension by WACCM-X.
+  usable_level_fraction: 0.5
+  # A pressure level is usable where at least this fraction of its months and latitudes are finite.
+  # This is the threshold behind the usable ranges, the overlap, and the extension decision.
+  usable_sample_fraction: 0.9
+  # Species given their own table in the Markdown summary, in priority order. Every other species a
+  # product holds is still analyzed and listed in the CSV and JSON.
+  # Canonical species names from config/species.yaml; NO is quoted because YAML reads bare no/NO as a boolean.
+  application_focus: [O3, temperature, H2O, 'NO', NO2, HNO3, N2O, CH4, ClO, Cl2O2, Cly, Bry, NOy]

@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 import cftime
+import warnings
 from pathlib import Path
 
 from jumacs import cf
@@ -33,6 +34,20 @@ def test_default_period_statistics_have_30_years():
     assert result.n_years.sel(month=1).item() == 30
     assert result.minimum.sel(month=1).item() == 1985
     assert result.maximum.sel(month=1).item() == 2014
+
+
+def test_cftime_reading_forces_cftime_timestamps_on_every_calendar(tmp_path):
+    from jumacs.netcdf import open_cftime_dataset
+    for calendar in ("standard", "360_day", "noleap"):
+        path = tmp_path / f"{calendar}.nc"
+        xr.Dataset({"a": ("time", [1.0, 2.0])},
+                   coords={"time": xr.cftime_range("1985-01", periods=2, freq="MS", calendar=calendar)}).to_netcdf(path)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            with open_cftime_dataset(path) as opened:
+                first = opened.time.values[0]
+                assert hasattr(first, "calendar") and first.year == 1985
+                assert opened.time.dt.year.values.tolist() == [1985, 1985]
 
 
 def test_waccmx_ready_made_zonal_reader_and_pressure(tmp_path):

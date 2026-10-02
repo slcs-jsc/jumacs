@@ -6,7 +6,8 @@ import xarray as xr
 
 from . import cf
 from .config import ROOT, load_config, reference_period, is_waccmx, model_slug, vertical_grid
-from .vertical import PRESSURE_ATTRS, native_pressure, regrid_to_common_grid, vertical_dimension
+from .vertical import PRESSURE_ATTRS, native_pressure, pressure_report, regrid_to_common_grid, vertical_dimension
+from .netcdf import open_cftime_dataset
 
 
 class MissingPressureCoordinate(ValueError):
@@ -76,8 +77,8 @@ def on_common_grid(ds, name, start_year, end_year, grid, native_coordinate=""):
                   "vertical_extrapolation": "none; targets outside a profile's finite range are NaN"}
     finite = native.where(np.isfinite(native) & (native > 0))
     if finite.size:
-        provenance["native_pressure_min_pa"] = round(float(finite.min()), 4)
-        provenance["native_pressure_max_pa"] = round(float(finite.max()), 4)
+        provenance["native_pressure_min_pa"] = pressure_report(finite.min())
+        provenance["native_pressure_max_pa"] = pressure_report(finite.max())
     return regridded, provenance
 
 
@@ -256,7 +257,7 @@ def build_climatology(model, start_year, end_year, variables=None):
         path = base / f"{name}_monthly_zonal.nc"
         if not path.exists():
             raise FileNotFoundError(path)
-        with xr.open_dataset(path, use_cftime=True) as ds:
+        with open_cftime_dataset(path) as ds:
             coverage_bounds.extend((str(ds.time.values[0]), str(ds.time.values[-1])))
             source_attrs = dict(ds[name].attrs)
             field, regrid_provenance = on_common_grid(ds, name, start_year, end_year, grid,

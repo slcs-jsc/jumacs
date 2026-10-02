@@ -7,6 +7,7 @@ import csv
 import json
 
 from .config import ROOT, load_config, model_metadata, registry
+from .netcdf import open_cftime_dataset
 from .download import manifest_path
 
 NETCDF_MAGICS = (b"CDF\x01", b"CDF\x02", b"CDF\x03", b"\x89HDF\r\n\x1a\n", b"\x0e\x03\x13\x01")
@@ -74,14 +75,13 @@ def select_representatives(model, files, root=ROOT, limit=MAX_REPRESENTATIVES):
 
 
 def _open_representatives(model, files, root):
-    import xarray as xr
     from .config import is_waccmx
     config = load_config(model)
     checked, failures, time_decode = [], [], None
     for record in files:
         path = root / record["local_path"]
         try:
-            with xr.open_dataset(path, decode_times=True, use_cftime=True) as ds:
+            with open_cftime_dataset(path) as ds:
                 native = record["variable"]
                 if not is_waccmx(config) and native not in ds and not any(native == v for v in ds.variables):
                     failures.append(f"{path.name}: variable {native} absent")

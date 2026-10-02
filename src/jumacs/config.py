@@ -113,6 +113,21 @@ def vertical_grid():
             "description": grid.get("description", ""), "levels": tuple(sorted(levels, reverse=True))}
 
 
+def coverage_settings():
+    """Coverage-matrix thresholds and the application focus list; diagnostics only, never products."""
+    coverage = reference_period().get("coverage") or {}
+
+    def fraction(key, default):
+        value = float(coverage.get(key, default))
+        if not 0.0 < value <= 1.0:
+            raise ValueError(f"coverage.{key} must be in (0, 1]")
+        return value
+
+    return {"usable_level_fraction": fraction("usable_level_fraction", 0.5),
+            "usable_sample_fraction": fraction("usable_sample_fraction", 0.9),
+            "application_focus": tuple(coverage.get("application_focus", ()))}
+
+
 def model_period(model):
     """Per-model processing window; config/climatology.yaml is the single default source."""
     period = load_config(model).get("period")

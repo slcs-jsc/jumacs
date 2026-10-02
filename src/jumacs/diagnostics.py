@@ -5,6 +5,7 @@ import numpy as np
 import xarray as xr
 
 from .config import ROOT, load_config
+from .netcdf import open_cftime_dataset
 
 
 def validate(model):
@@ -13,7 +14,7 @@ def validate(model):
     report = {"model": model, "experiment": config["model"]["experiment"], "variables": {}}
     for path in sorted(base.glob("*_monthly_zonal.nc")):
         name = path.name.removesuffix("_monthly_zonal.nc")
-        with xr.open_dataset(path, use_cftime=True) as ds:
+        with open_cftime_dataset(path) as ds:
             data = ds[name]
             stamps = [(int(t.year), int(t.month)) for t in data.time.values]
             expected = [(y, m) for y in range(min(y for y, _ in stamps), max(y for y, _ in stamps) + 1) for m in range(1, 13)]
@@ -44,7 +45,7 @@ def trend_plots(model):
         path = ROOT / config["paths"]["zonal"] / f"{name}_monthly_zonal.nc"
         if not path.exists():
             continue
-        with xr.open_dataset(path, use_cftime=True) as ds:
+        with open_cftime_dataset(path) as ds:
             data = ds[name]
             dims = [d for d in data.dims if d != "time"]
             series = data.mean(dims, skipna=True)

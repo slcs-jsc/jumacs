@@ -75,6 +75,11 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
         assert check["finite_fraction"] == round(covered.mean(), 4)
     assert report["checks"]["ta"]["pressure_plausible"] and report["checks"]["ta"]["pressure_monotonic"]
     assert report["vertical_grid"]["level_count"] == len(levels)
+    assert report["vertical_grid"]["pressure_min_pa"] == 1e-05
+    assert report["vertical_grid"]["pressure_max_pa"] == 100000.0
+    assert report["checks"]["ta"]["pressure_min_pa"] == 1e-05
+    assert report["checks"]["ta"]["pressure_max_pa"] == 100000.0
+    assert f"{report['vertical_grid']['pressure_min_pa']:g}" == "1e-05"
     assert combined.attrs["variable_count"] == 3
     assert combined.attrs["vertical_coordinate"].startswith("pressure")
     assert combined.attrs["vertical_extrapolation"].startswith("none")
