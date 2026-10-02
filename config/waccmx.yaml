@@ -33,3 +33,20 @@ variables:
   O: O
   O2: O2
   N2: N2_vmr
+# CF standard names for the WACCM-X output names, which are raw CAM-chem names
+# rather than CF names. Only names held to be unambiguously CF are listed; the
+# rest keep a descriptive long_name and no standard_name. cf.curated_standard_name
+# republishes a name here only when the field's units match what that CF name
+# requires, so an entry cannot mislabel a field. Harmonic coefficients
+# (T_24_COS and friends), ion/electron temperatures, electric fields, conductivities
+# and gravity-wave tendencies are deliberately absent: CF has no name for them that
+# survives that test.
+standard_names:
+  O3: mole_fraction_of_ozone_in_air
+  CO2: mole_fraction_of_carbon_dioxide_in_air
+  CH4: mole_fraction_of_methane_in_air
+  T: air_temperature
+  PS: surface_air_pressure
+  U: eastward_wind
+  V: northward_wind
+  OMEGA: lagrangian_tendency_of_air_pressure

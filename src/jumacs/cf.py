@@ -58,6 +58,7 @@ ALLOWED_NAMES = {
     "atmosphere_mass_content_of_ozone", "atmosphere_mass_content_of_tracer",
     "tropopause_air_pressure", "tropopause_air_temperature",
     "tropopause_geopotential_height", "atmosphere_mole_fraction_of_species",
+    "lagrangian_tendency_of_air_pressure",
 }
 
 
@@ -76,6 +77,55 @@ def valid_standard_name(name):
     if text.startswith(("atmosphere_", "sea_", "at_")) and text.count("_") >= 2 and text.endswith("_air"):
         return text
     return None
+
+
+# Unit agreement for names assigned from model configuration. A curated name is a
+# claim made by this project rather than read from the archive, so it is published
+# only when the field's units match what the CF name requires (units are compared
+# after folding negative exponents into slash form, so "m s-1" equals "m/s").
+EXPECTED_UNITS = {
+    "air_temperature": {"k"},
+    "surface_temperature": {"k"},
+    "surface_air_pressure": {"pa"},
+    "air_pressure": {"pa"},
+    "eastward_wind": {"m/s"},
+    "northward_wind": {"m/s"},
+    "lagrangian_tendency_of_air_pressure": {"pa/s"},
+    "geopotential_height": {"m2/s2"},
+    "geopotential": {"m2/s2"},
+}
+MOLE_FRACTION_UNITS = {"mol/mol", "mole/mole", "1"}
+MASS_FRACTION_UNITS = {"kg/kg", "1"}
+
+_NEGATIVE_EXPONENT = re.compile(r"([a-z0-9]+)-(\d+)")
+
+
+def _units_key(units):
+    """Fold a units string into one comparable spelling: ``m s-1`` and ``m/s`` agree."""
+    text = str(units or "").strip().lower().replace("**", "").replace("^", "")
+    text = _NEGATIVE_EXPONENT.sub(lambda m: "/" + m.group(1) + ("" if m.group(2) == "1" else m.group(2)), text)
+    return re.sub(r"\s+", "", text)
+
+
+def curated_standard_name(candidate, units):
+    """A configured ``standard_name``, accepted only when its units agree.
+
+    Returns ``None`` for an unrecognised name, for missing units, and when a
+    listed name and the field's units disagree - for example ``geopotential_height``
+    (CF units ``m2 s-2``) on a field stored in metres.
+    """
+    name = valid_standard_name(candidate)
+    key = _units_key(units)
+    if not name or not key:
+        return None
+    if name.startswith(("mole_fraction_of_", "mole_mixing_ratio_of_")):
+        return name if key in MOLE_FRACTION_UNITS else None
+    if name.startswith(("mass_fraction_of_", "mass_mixing_ratio_of_")):
+        return name if key in MASS_FRACTION_UNITS else None
+    expected = EXPECTED_UNITS.get(name)
+    if expected is None:
+        return name
+    return name if key in expected else None
 
 
 def _is_leap(year):
@@ -137,6 +187,22 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
     coordinate = grid.get("coordinate", "pressure")
     if str(ds.attrs.get("Conventions", "")).strip() != CONVENTIONS:
         problems.append(f"Conventions must be {CONVENTIONS}, found {ds.attrs.get('Conventions')!r}")
+    period = str(ds.attrs.get("climatology_period", "")).strip()
+    span = re.fullmatch(r"(\d{4})-(\d{4})", period)
+    if not span:
+        problems.append(f"climatology_period must read 'YYYY-YYYY', found {period!r}")
+    else:
+        first, last = span.groups()
+        if str(ds.attrs.get("time_coverage_start", "")).strip() != f"{first}-01-01":
+            problems.append(f"time_coverage_start must be {first}-01-01 (the climatological period), found "
+                            f"{ds.attrs.get('time_coverage_start')!r}; the span of the source series belongs in "
+                            f"source_time_coverage_start")
+        if str(ds.attrs.get("time_coverage_end", "")).strip() != f"{last}-12-31":
+            problems.append(f"time_coverage_end must be {last}-12-31 (the climatological period), found "
+                            f"{ds.attrs.get('time_coverage_end')!r}")
+        years = ds.attrs.get("reference_period_years")
+        if years is not None and int(years) != int(last) - int(first) + 1:
+            problems.append(f"reference_period_years must be {int(last) - int(first) + 1} for {period}, found {years}")
     if "time" not in ds.dims or ds.sizes.get("time") != 12:
         problems.append(f"the time axis must hold 12 climatological months, found {ds.sizes.get('time')}")
     if "time" not in ds.coords:

@@ -100,8 +100,8 @@ def test_climatology_provenance_and_cf_product(tmp_path, monkeypatch):
     import jumacs.climatology as module
     monkeypatch.setattr(module, "ROOT", tmp_path)
     zonal = tmp_path / "data/processed/GEOSCCM/refD1"; zonal.mkdir(parents=True)
-    times = xr.date_range("1985-01", periods=30*12, freq="MS", use_cftime=True)
-    data = xr.Dataset({"o3": (("time","plev","lat"), np.ones((360,2,1)), {"units":"mol/mol"})},
+    times = xr.date_range("1982-01", periods=33*12, freq="MS", use_cftime=True)
+    data = xr.Dataset({"o3": (("time","plev","lat"), np.ones((396,2,1)), {"units":"mol/mol"})},
         coords={"time":times,"plev":xr.DataArray([100000.,10000.],dims="plev",attrs={"units":"Pa","standard_name":"air_pressure"}),"lat":[0.]})
     data.to_netcdf(zonal / "o3_monthly_zonal.nc")
     product = build_climatology("GEOSCCM",1985,2014,["O3"])
@@ -115,6 +115,11 @@ def test_climatology_provenance_and_cf_product(tmp_path, monkeypatch):
         assert root.attrs["model"] == "GEOSCCM"
         assert root.attrs["bias_correction"] == "none"
         assert root.attrs["variable_count"] == 1
+        assert root.attrs["climatology_period"] == "1985-2014"
+        assert root.attrs["time_coverage_start"] == "1985-01-01"
+        assert root.attrs["time_coverage_end"] == "2014-12-31"
+        assert root.attrs["source_time_coverage_start"].startswith("1982")
+        assert root.attrs["source_time_coverage_end"].startswith("2014")
         assert root.o3_n_years.isel(time=0).max().item() == 30
         assert root.o3_mean.attrs["source_variable"] == "o3"
         assert root.o3_mean.dims == ("time", "pressure", "lat")
@@ -125,6 +130,8 @@ def test_climatology_provenance_and_cf_product(tmp_path, monkeypatch):
         mean = root.o3_mean.isel(time=0).transpose("pressure", "lat").values
         assert np.isnan(mean[above_top]).all()
         assert np.isfinite(mean[~above_top]).all()
+        root.attrs["time_coverage_start"] = root.attrs["source_time_coverage_start"]
+        assert any("time_coverage_start" in problem for problem in cf.validate_product(root, names=("o3",)))
 
 
 def test_availability_matrix_keeps_models_separate(tmp_path, monkeypatch):
@@ -356,3 +363,25 @@ def test_write_summaries_offline_and_deterministic(tmp_path, monkeypatch):
     text = (tmp_path / "products/comparison/summary.md").read_text()
     assert "## WACCM-X" in text and "unresolved" in text
     assert not any(tmp_path.rglob("*.nc"))
+
+
+def test_waccmx_curated_standard_names_are_unit_checked(tmp_path, monkeypatch):
+    import jumacs.climatology as module
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    zonal = tmp_path / "data/processed/WACCM-X/transient-1950-2015"; zonal.mkdir(parents=True)
+    times = xr.date_range("1985-01", periods=30*12, freq="MS", use_cftime=True)
+    levels = xr.DataArray([100000., 10000.], dims="lev",
+                          attrs={"units": "Pa", "standard_name": "air_pressure"})
+    source = xr.Dataset({name: (("time", "lev", "lat"), np.ones((360, 2, 1)), {"units": units, "original_name": name})
+                         for name, units in (("O3", "mol/mol"), ("T", "K"), ("Z3", "m"))},
+                        coords={"time": times, "lev": levels, "lat": [0.]})
+    for name in ("O3", "T", "Z3"):
+        source[[name]].to_netcdf(zonal / f"{name}_monthly_zonal.nc")
+    product = build_climatology("WACCM-X", 1985, 2014)
+    with xr.open_dataset(product, decode_cf=False) as root:
+        cf.assert_product(root, names=("O3", "T", "Z3"))
+        assert root.O3_mean.attrs["standard_name"] == "mole_fraction_of_ozone_in_air"
+        assert root.O3_mean.attrs["standard_name_source"] == "config"
+        assert root.T_mean.attrs["standard_name"] == "air_temperature"
+        assert "standard_name" not in root.Z3_mean.attrs
+        assert "standard_name" not in root.O3_n_years.attrs

@@ -81,19 +81,27 @@ def on_common_grid(ds, name, start_year, end_year, grid, native_coordinate=""):
     return regridded, provenance
 
 
-def variable_statistics(name, stats, source_attrs, regrid_provenance):
+def variable_statistics(name, stats, source_attrs, regrid_provenance, standard_names=None):
     """Rename one variable's statistics and describe them for CF."""
     renamed = stats.rename({statistic: f"{name}_{statistic}" for statistic in stats.data_vars})
-    standard_name = cf.valid_standard_name(source_attrs.get("standard_name"))
+    units = source_attrs.get("units", "")
+    curated = (standard_names or {}).get(name) or (standard_names or {}).get(name.lower())
+    if curated:
+        standard_name = cf.curated_standard_name(curated, units)
+        standard_name_source = "config" if standard_name else ""
+    else:
+        standard_name = cf.valid_standard_name(source_attrs.get("standard_name"))
+        standard_name_source = "archive" if standard_name else ""
     base_long_name = source_attrs.get("long_name") or source_attrs.get("original_name") or name
     original_name = str(source_attrs.get("original_name") or "")
     for statistic in cf.STATISTIC_ORDER:
         field = renamed[f"{name}_{statistic}"].astype(cf.STATISTIC_DTYPES[statistic])
         attrs = {"long_name": f"{base_long_name}: {cf.statistic_long_name(statistic)}",
-                 "units": "1" if statistic == "n_years" else source_attrs.get("units", ""),
+                 "units": "1" if statistic == "n_years" else units,
                  "source_variable": name, "cell_methods": cf.cell_methods(statistic)}
         if standard_name and statistic != "n_years":
             attrs["standard_name"] = standard_name
+            attrs["standard_name_source"] = standard_name_source
         if original_name and original_name != name:
             attrs["original_name"] = original_name
         if statistic == "mean":
@@ -121,8 +129,10 @@ def product_attributes(model, config, start_year, end_year, names, coverage_boun
         "climatology_period": f"{start_year}-{end_year}",
         "reference_period_years": end_year - start_year + 1,
         "nominal_reference_year": reference["nominal_reference_year"],
-        "time_coverage_start": str(min(coverage_bounds)) if coverage_bounds else "",
-        "time_coverage_end": str(max(coverage_bounds)) if coverage_bounds else "",
+        "time_coverage_start": f"{start_year}-01-01",
+        "time_coverage_end": f"{end_year}-12-31",
+        "source_time_coverage_start": str(min(coverage_bounds)) if coverage_bounds else "",
+        "source_time_coverage_end": str(max(coverage_bounds)) if coverage_bounds else "",
         "product": "monthly climatology of zonal means on one common pressure grid",
         "horizontal_grid": "zonal mean over all longitudes; latitude is the only horizontal dimension",
         "statistics": " ".join(cf.STATISTIC_ORDER),
@@ -252,6 +262,7 @@ def build_climatology(model, start_year, end_year, variables=None):
             field, regrid_provenance = on_common_grid(ds, name, start_year, end_year, grid,
                                                       config["coordinates"].get("level", ""))
             stats = monthly_climatology(field, start_year, end_year)
-            parts.append(variable_statistics(name, stats, source_attrs, regrid_provenance))
+            parts.append(variable_statistics(name, stats, source_attrs, regrid_provenance,
+                                             config.get("standard_names") or {}))
     return write_product(model, start_year, end_year, parts, coverage_bounds)
 
