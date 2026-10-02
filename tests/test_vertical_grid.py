@@ -7,9 +7,9 @@ import xarray as xr
 import jumacs.climatology as climatology_module
 import jumacs.config as config_module
 from jumacs import cf
-from jumacs.climatology import (MissingPressureCoordinate, assemble_product, build_climatology, monthly_climatology,
-                                native_monthly_field, pressure_climatology, product_name, register_pressure,
-                                variable_statistics)
+from jumacs.climatology import (MissingPressureCoordinate, assemble_product, build_climatology, level_grid_name,
+                                monthly_climatology, native_monthly_field, pressure_climatology, product_name,
+                                register_pressure, variable_statistics)
 from jumacs.config import load_config, vertical_grid
 from jumacs.vertical import (interpolate_log_pressure, native_pressure, pressure_report, product_pressure,
                              regrid_to_common_grid)
@@ -225,6 +225,17 @@ def test_the_native_to_grid_interpolation_ignores_level_order_and_units():
     assert low.attrs["units"] == "mol mol-1" and low.attrs["vertical_extrapolation"] == "none"
 
 
+def test_interpolating_one_field_does_not_take_the_pressure_off_the_fields_that_follow():
+    data = with_pressure(zonal_dataset("ta", [[[0.], [1.], [2.]]], periods=1), [1e5, 1e4, 1e3])
+    data["o3"] = data.ta * 2
+    interpolated = interpolate_log_pressure(data.ta.isel(time=0, lat=0), native_pressure(data, data.ta), [5e4])
+    assert interpolated.pressure.attrs["units"] == "Pa" and math.isfinite(interpolated.values[0])
+
+    assert data.lev.attrs["standard_name"] == "air_pressure" and data.lev.attrs["units"] == "Pa"
+    remaining = native_pressure(data, data.o3)
+    assert remaining is not None and np.allclose(remaining.values, [1e5, 1e4, 1e3])
+
+
 def test_a_three_dimensional_field_without_any_pressure_description_is_refused():
     data = zonal_dataset("o3", np.zeros((2, 3, 1)), periods=2).assign_coords(
         lev=("lev", [0., 0.5, 1.], {"standard_name": "atmosphere_hybrid_sigma_pressure_coordinate"}))
@@ -298,6 +309,53 @@ def test_a_hybrid_product_publishes_the_climatological_pressure_of_its_native_le
         between_tops = LEVELS[(LEVELS < 1e3) & (LEVELS > 500.0)][0]
         column = placed.isel(pressure=int(np.flatnonzero(LEVELS == between_tops)[0]))
         assert np.isnan(column.values[0]) and np.isfinite(column.values[1])
+
+
+def test_the_level_name_of_a_source_holds_one_product_dimension_per_grid():
+    grids = {}
+    coarse = xr.DataArray([1e5, 1e4], dims="lev")
+    assert level_grid_name(grids, "lev", coarse) == "lev"
+    assert level_grid_name(grids, "lev", coarse * (1 + 1e-9)) == "lev"
+    assert level_grid_name(grids, "lev", xr.DataArray([1e5, 1e4, 1e3], dims="lev")) == "lev_2"
+    assert level_grid_name(grids, "lev", xr.DataArray(np.full((2, 2, 2), 7.0), dims=("time", "lev", "lat"))) == "lev_3"
+    redundant = xr.DataArray(np.broadcast_to(np.array([1e5, 1e4])[None, :, None], (3, 2, 1)).copy(),
+                             dims=("time", "plev", "lat"))
+    assert level_grid_name(grids, "plev", coarse) == "plev"
+    assert level_grid_name(grids, "plev", redundant) == "plev"
+    assert [name for name, _ in grids["lev"]] == ["lev", "lev_2", "lev_3"]
+
+
+def test_two_native_grids_that_share_the_source_level_name_are_published_apart(tmp_path, monkeypatch):
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    chemistry = np.broadcast_to(np.array([0., 1., 2., 3.])[None, :, None], (24, 4, 2)).copy()
+    store(tmp_path, "GEOSCCM", "br",
+          with_pressure(zonal_dataset("br", chemistry, lats=(-45., 45.), periods=24), [1e5, 1e4, 1e3, 1e2]))
+    hybrid_pressure = profile([1e5, 1e4, 1e3], 24) * np.array([1.0, 0.5])[None, None, :]
+    dynamics = zonal_dataset("o3", np.broadcast_to(np.array([10., 20., 30.])[None, :, None], (24, 3, 2)),
+                             lats=(-45., 45.), periods=24)
+    dynamics = dynamics.assign_coords(lev=("lev", np.arange(3.), {"units": "1",
+                                                                  "standard_name": "atmosphere_hybrid_sigma_pressure_coordinate",
+                                                                  "bounds": "lev_bnds"}))
+    store(tmp_path, "GEOSCCM", "o3", with_hybrid_pressure(dynamics, hybrid_pressure))
+    product = build_climatology("GEOSCCM", 2000, 2001, ["br", "o3"])
+    with xr.open_dataset(product, decode_cf=False) as ds:
+        cf.assert_product(ds, names=("br", "o3"), grid=GRID)
+        assert list(ds.br_mean.dims) == ["time", "lev", "lat"]
+        assert list(ds.o3_mean.dims) == ["time", "lev_2", "lat"]
+        assert ds.sizes["lev"] == 4 and ds.sizes["lev_2"] == 3
+        assert np.allclose(ds.lev.values, [1e5, 1e4, 1e3, 1e2])
+        assert ds.br_mean.attrs["native_level_dimension"] == "lev"
+        assert ds.o3_mean.attrs["native_level_dimension"] == "lev_2"
+        assert ds.o3_mean.attrs["native_vertical_coordinate"] == "lev"
+        assert ds.br_mean.attrs["pressure_coordinate"] == "lev" and "pressure_field" not in ds.br_mean.attrs
+        assert ds.o3_mean.attrs["pressure_field"] == "air_pressure_lev_2"
+        assert list(ds.air_pressure_lev_2.dims) == ["time", "lev_2", "lat"]
+        assert np.allclose(ds.air_pressure_lev_2.values, hybrid_pressure[:12])
+        assert ds.lev_2.attrs["units"] == "1" and "standard_name" not in ds.lev_2.attrs
+        assert "bounds" not in ds.lev_2.attrs and ds.lev_2.attrs["source_level_coordinate"] == "lev"
+        assert ds.attrs["vertical_level_counts"] == "lev=4; lev_2=3"
+        assert ds.attrs["vertical_coordinate"].count("named 'lev' in the source") == 1
+        assert not [dim for dim in ds.dims if dim not in ("time", "lev", "lev_2", "lat", cf.BOUNDS_DIMENSION)]
 
 
 def test_a_product_built_on_the_application_pressure_grid_is_not_written(tmp_path, monkeypatch):

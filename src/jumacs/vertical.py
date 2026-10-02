@@ -70,6 +70,23 @@ def product_pressure(ds, field):
     return native_pressure(ds, field)
 
 
+def own_level_coordinate(array, level):
+    """The array with its own copy of the metadata of the vertical coordinate it is asked to consume.
+
+    ``apply_ufunc`` rebuilds the coordinates of the dimensions it consumes and writes the result back into
+    the coordinate objects it was handed, which for a native product are the very objects the dataset holds:
+    reading the pressure straight off a pressure-level product and interpolating one column stripped the
+    units and the standard name from the level coordinate of the product itself, so every field of that grid
+    read afterwards as having no pressure at all and was dropped without a word. Owning a copy here keeps
+    the published product as it was written.
+    """
+    if level not in array.coords:
+        return array
+    detached = array.copy(deep=False)
+    detached.coords[level] = array[level].variable.copy()
+    return detached
+
+
 def interpolate_log_pressure(field, pressure, target_pa, bridge_gaps=True):
     """Linear interpolation in log pressure on one column; never extrapolates.
 
@@ -83,6 +100,7 @@ def interpolate_log_pressure(field, pressure, target_pa, bridge_gaps=True):
         level = next((dim for dim in pressure.dims if dim in field.dims and dim not in NON_VERTICAL), None)
     if level is None:
         raise ValueError("No shared native vertical dimension")
+    field, pressure = own_level_coordinate(field, level), own_level_coordinate(pressure, level)
     targets = np.asarray(target_pa, dtype=float)
     if np.any(targets <= 0):
         raise ValueError("Pressure levels must be positive")
