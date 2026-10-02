@@ -31,9 +31,10 @@ def write_product(workspace, model, fields, grid_levels=None):
         if flat:
             mean[...] = spec.get("value", 1.0)
         else:
-            months = slice(None) if spec.get("sample_count") is None else slice(0, spec["sample_count"])
             for window in [spec.get("levels", (0, pressure.size))] + spec.get("blocks", []):
-                mean[months, window[0]:window[1], :] = spec.get("value", 1.0)
+                months = window[2] if len(window) > 2 else spec.get("sample_count")
+                block = slice(None) if months is None else slice(0, months)
+                mean[block, window[0]:window[1], :] = spec.get("value", 1.0)
         for statistic in cf.STATISTIC_ORDER:
             values = (np.ones(shape, "int16") if statistic == "n_years" else
                       (mean if statistic == "mean" else np.abs(mean).astype("float32")))
@@ -92,6 +93,47 @@ def test_an_overlapping_model_that_stops_lower_is_an_extension_candidate(workspa
     assert ozone["overlap_max_pressure_pa"] == pytest.approx(grid[0])
     assert ozone["waccmx_extends_upward"] is True
     assert ozone["application_focus"] is True and ozone["group"] == "ozone"
+
+
+def test_the_lower_extent_is_the_valid_extent_so_terrain_thinning_does_not_hide_1000_hpa(workspace):
+    grid = levels()
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (1, 70), "blocks": [(0, 1, 6)]}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
+    _, rows = matrix(["CMAM", "WACCM-X"])
+    ozone = row_for(rows, "CMAM", "O3")
+    assert ozone["max_valid_pressure_pa"] == pytest.approx(100000.0) == pytest.approx(grid[0])
+    assert ozone["max_any_pressure_pa"] == ozone["max_valid_pressure_pa"]
+    assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[1])
+    assert ozone["level_finite_fractions"][0] == pytest.approx(0.5)
+    assert ozone["levels_any_finite"] == 70 and ozone["levels_usable"] == 69
+    assert ozone["contiguous_usable"] is True
+
+
+def test_a_sparse_upper_level_does_not_become_the_usable_top(workspace):
+    grid = levels()
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (0, 70), "blocks": [(90, 91, 3)]}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
+    _, rows = matrix(["CMAM", "WACCM-X"])
+    ozone = row_for(rows, "CMAM", "O3")
+    assert ozone["min_any_pressure_pa"] == pytest.approx(grid[90])
+    assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["min_any_pressure_pa"] < ozone["min_usable_pressure_pa"]
+    assert ozone["overlap_min_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["waccmx_extends_upward"] is True and ozone["extension_status"] == "extension_candidate"
+
+
+def test_the_valid_lower_bound_is_descriptive_and_leaves_the_decision_alone(workspace):
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (1, 70), "blocks": [(0, 1, 6)]}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
+    thinned = row_for(matrix(["CMAM", "WACCM-X"])[1], "CMAM", "O3")
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (1, 70)}})
+    plain = row_for(matrix(["CMAM", "WACCM-X"])[1], "CMAM", "O3")
+    decided = ("overlap_exists", "overlap_level_count", "overlap_min_pressure_pa", "overlap_max_pressure_pa",
+               "min_usable_pressure_pa", "waccmx_min_usable_pressure_pa", "waccmx_extends_upward",
+               "extension_status")
+    assert {key: thinned[key] for key in decided} == {key: plain[key] for key in decided}
+    assert thinned["max_valid_pressure_pa"] > plain["max_valid_pressure_pa"]
+    assert thinned["max_usable_pressure_pa"] == plain["max_usable_pressure_pa"]
 
 
 def test_ranges_that_do_not_meet_leave_no_overlap(workspace):
@@ -249,6 +291,7 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     table = read_csv(workspace / "products/comparison/coverage_matrix.csv")
     ozone, methane, surface = table[("CMAM", "O3")], table[("CMAM", "CH4")], table[("CMAM", "surface_pressure")]
     assert ozone["max_usable_pressure_pa"] == "100000.0"
+    assert ozone["max_valid_pressure_pa"] == "100000.0" and ozone["waccmx_max_valid_pressure_pa"] == "100000.0"
     assert float(ozone["min_usable_pressure_pa"]) == pytest.approx(levels()[69])
     assert float(ozone["overlap_min_pressure_pa"]) == pytest.approx(levels()[69])
     assert float(ozone["waccmx_min_usable_pressure_pa"]) == pytest.approx(levels()[100])
@@ -268,8 +311,11 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     record = row_for(document["rows"], "CMAM", "O3")
     assert record["level_finite_fractions"] == [1.0] * 70 + [0.0] * (len(levels()) - 70)
     assert record["application_focus"] is True
+    assert "max_valid_pressure_pa" in document["definitions"]
     markdown = (workspace / "products/comparison/coverage_matrix.md").read_text()
     assert "| CMAM | O3 |" in markdown
+    assert "| Model | Variable | CCMI range | WACCM-X range | Usable overlap | Extends upward | Status |" in markdown
+    assert "descriptive" in markdown and "1000 hPa counts" in markdown
     assert "1000 hPa" in markdown and "1e-07 hPa" in markdown and "no blending" in markdown
     assert markdown.count("| --- | --- | --- | --- | --- | --- | --- |") == 2
     assert "Mapped but absent from the WACCM-X product: CH4" in markdown

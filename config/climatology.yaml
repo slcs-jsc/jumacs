@@ -137,7 +137,8 @@ coverage:
   # called broadly usable. It is not a condition for overlap or for extension by WACCM-X.
   usable_level_fraction: 0.5
   # A pressure level is usable where at least this fraction of its months and latitudes are finite.
-  # This is the threshold behind the usable ranges, the overlap, and the extension decision.
+  # This is the threshold behind the usable ranges, the overlap, and the extension decision. The reported
+  # lower extent is any-finite instead (max_valid_pressure_pa), so terrain does not hide 1000 hPa.
   usable_sample_fraction: 0.9
   # Species given their own table in the Markdown summary, in priority order. Every other species a
   # product holds is still analyzed and listed in the CSV and JSON.

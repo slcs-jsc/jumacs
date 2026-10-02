@@ -285,7 +285,10 @@ def _range_of(pressure, mask):
 
 def extension_row(model, variable, entry, donor_entry, donor_mapped, group, focus, pressure, sample_fraction,
                   level_fraction):
-    """One CCMI model and variable against WACCM-X, decided from the level masks rather than endpoints."""
+    """One CCMI model and variable against WACCM-X, decided from the level masks rather than endpoints.
+
+    The lower valid extent is descriptive and any-finite based; overlap and extension use usable masks only.
+    """
     ccmi_mask = usable_mask(entry, sample_fraction)
     donor_mask = usable_mask(donor_entry, sample_fraction)
     both = None if ccmi_mask is None or donor_mask is None else np.logical_and(ccmi_mask, donor_mask)
@@ -317,8 +320,10 @@ def extension_row(model, variable, entry, donor_entry, donor_mapped, group, focu
             "contiguous_usable": entry["contiguous_usable"] if entry else None,
             "max_any_pressure_pa": entry["max_any_pressure_pa"] if entry else None,
             "min_any_pressure_pa": entry["min_any_pressure_pa"] if entry else None,
+            "max_valid_pressure_pa": entry["max_any_pressure_pa"] if entry else None,
             "max_usable_pressure_pa": ccmi_bottom, "min_usable_pressure_pa": ccmi_top,
             "waccmx_available": donor_entry is not None and donor_entry["is_3d"],
+            "waccmx_max_valid_pressure_pa": donor_entry["max_any_pressure_pa"] if donor_entry else None,
             "waccmx_max_usable_pressure_pa": donor_bottom, "waccmx_min_usable_pressure_pa": donor_top,
             "overlap_exists": overlap_levels > 0, "overlap_level_count": overlap_levels,
             "overlap_max_pressure_pa": overlap_bottom, "overlap_min_pressure_pa": overlap_top,
@@ -374,8 +379,9 @@ def _cell(value):
 
 EXTENSION_COLUMNS = ("model", "variable", "group", "application_focus", "product_variable", "units", "present",
                      "is_3d", "finite_fraction", "levels_any_finite", "levels_usable", "broadly_usable",
-                     "contiguous_usable", "max_any_pressure_pa", "min_any_pressure_pa", "max_usable_pressure_pa",
-                     "min_usable_pressure_pa", "waccmx_available", "waccmx_max_usable_pressure_pa",
+                     "contiguous_usable", "max_any_pressure_pa", "min_any_pressure_pa", "max_valid_pressure_pa",
+                     "max_usable_pressure_pa", "min_usable_pressure_pa", "waccmx_available",
+                     "waccmx_max_valid_pressure_pa", "waccmx_max_usable_pressure_pa",
                      "waccmx_min_usable_pressure_pa", "overlap_exists", "overlap_level_count",
                      "overlap_max_pressure_pa", "overlap_min_pressure_pa", "waccmx_extends_upward",
                      "extension_status")
@@ -399,13 +405,13 @@ def extension_markdown(path, models, donor, rows, sample_fraction, level_fractio
     missing = sorted({row["variable"] for row in rows if row["extension_status"] == "no_waccmx_variable"})
     unmapped = sorted({row["variable"] for row in rows if row["extension_status"] == "mapping_unresolved"})
     flat = sorted({row["variable"] for row in rows if row["present"] and not row["is_3d"]})
-    header = ("| Model | Variable | CCMI usable | WACCM-X usable | Overlap | Extends upward | Status |",
+    header = ("| Model | Variable | CCMI range | WACCM-X range | Usable overlap | Extends upward | Status |",
               "| --- | --- | --- | --- | --- | --- | --- |")
 
     def line(row):
         return (f"| {row['model']} | {row['variable']} | "
-                f"{_span(row['min_usable_pressure_pa'], row['max_usable_pressure_pa'])} | "
-                f"{_span(row['waccmx_min_usable_pressure_pa'], row['waccmx_max_usable_pressure_pa'])} | "
+                f"{_span(row['min_usable_pressure_pa'], row['max_valid_pressure_pa'])} | "
+                f"{_span(row['waccmx_min_usable_pressure_pa'], row['waccmx_max_valid_pressure_pa'])} | "
                 f"{_span(row['overlap_min_pressure_pa'], row['overlap_max_pressure_pa'])} | "
                 f"{'yes' if row['waccmx_extends_upward'] else 'no'} | {row['extension_status']} |")
 
@@ -414,8 +420,12 @@ def extension_markdown(path, models, donor, rows, sample_fraction, level_fractio
               "values, and whether the two overlap. Diagnostics only: no blending, no filling, no ranking, and "
               "no change to products or interpolation.", "",
               f"- Products: {', '.join(models)}, compared with {donor}.",
-              f"- A pressure level is usable when at least {sample_fraction:g} of its months and latitudes are "
-              f"finite; *any finite* is reported separately and is weaker.",
+              f"- A pressure level is *usable* when at least {sample_fraction:g} of its months and latitudes are "
+              f"finite; *any finite* is weaker. The top of the usable range, `min_usable_pressure_pa`, is what the "
+              "extension decision uses.",
+              "- A *range* runs from the highest level with any finite value down to the top of the usable range, so "
+              "its lower bound is the *valid* extent: 1000 hPa counts there even where terrain removes it from part "
+              "of the time-latitude grid, which makes that bound descriptive and not a claim of usable coverage.",
               "- Overlap is the level-by-level AND of the two usable masks, so coverage broken in the middle "
               "stays broken instead of being bridged by endpoint ranges.",
               "- Extends upward means WACCM-X is usable at lower pressure, that is higher altitude, than the top "
@@ -475,6 +485,10 @@ def extension_json(path, models, donor, inventories, rows, sample_fraction, leve
             "min_usable_pressure_pa": "smallest pressure on a usable level: the top of the usable range",
             "max_usable_pressure_pa": "largest pressure on a usable level: the bottom of the usable range",
             "min_any_pressure_pa": "smallest pressure with any finite value: the top of the raw extent",
+            "max_any_pressure_pa": "largest pressure with any finite value",
+            "max_valid_pressure_pa": "same value as max_any_pressure_pa, named for its role: the reported lower "
+                                     "(valid) extent, which the overlap and extension decision ignores",
+            "waccmx_max_valid_pressure_pa": "the same valid lower extent for the WACCM-X field",
             "contiguous_usable": "the usable levels form one unbroken block; null when there are none",
             "overlap": "levels usable in both the CCMI model and WACCM-X, combined level by level",
             "waccmx_extends_upward": "WACCM-X is usable at lower pressure, that is higher altitude, than the top "
