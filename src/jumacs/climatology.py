@@ -14,6 +14,9 @@ class MissingPressureCoordinate(ValueError):
     """A three-dimensional field has no recoverable native pressure coordinate."""
 
 
+LATITUDE_SNAP_TOLERANCE_DEGREES = 1e-5
+
+
 def _slug(model, config):
     slug = config["model"].get("slug")
     if slug:
@@ -157,6 +160,61 @@ def product_attributes(model, config, start_year, end_year, names, coverage_boun
     }
 
 
+def _part_variable(part):
+    for key in part.data_vars:
+        return str(part[key].attrs.get("source_variable", ""))
+    return "<unnamed>"
+
+
+def _check_latitude(model, variable, anchor_variable, anchor, latitude):
+    if latitude.ndim != 1:
+        raise RuntimeError(f"latitude grid for variable '{variable}' of {model} is {latitude.ndim}-dimensional; "
+                           f"the climatology product needs one 1-D latitude coordinate per field")
+    if latitude.size != anchor.size:
+        raise RuntimeError(f"latitude grid for variable '{variable}' of {model} has {latitude.size} latitude points, "
+                           f"the canonical grid taken from '{anchor_variable}' has {anchor.size}; distinct latitude "
+                           f"grids are neither unioned nor interpolated")
+    if not np.array_equal(np.argsort(latitude, kind="stable"), np.argsort(anchor, kind="stable")):
+        raise RuntimeError(f"latitude grid for variable '{variable}' of {model} is ordered differently from the "
+                           f"canonical grid taken from '{anchor_variable}' ({latitude.size} latitude points); "
+                           f"fields are never reordered during assembly")
+    if not np.allclose(latitude, anchor, rtol=0.0, atol=LATITUDE_SNAP_TOLERANCE_DEGREES):
+        difference = float(np.max(np.abs(latitude - anchor)))
+        raise RuntimeError(
+            f"latitude grid for variable '{variable}' of {model} differs from the canonical model grid taken from "
+            f"'{anchor_variable}' beyond the {LATITUDE_SNAP_TOLERANCE_DEGREES} degree tolerance: {latitude.size} "
+            f"latitude points, maximum absolute coordinate difference {difference} degrees")
+
+
+def normalize_latitude(parts, model=""):
+    """Pin latitude grids that differ only by roundoff onto the canonical grid of the product.
+
+    Variable groups of one model can carry the same physical latitude axis with harmless
+    float64 roundoff of order 1e-6 degrees. An outer merge reads those as two different
+    axes and publishes their union, which leaves most latitude rows NaN and makes the
+    field look unusable. Grids that agree to LATITUDE_SNAP_TOLERANCE_DEGREES are therefore
+    snapped to the coordinate of the first assembled part; the values of the data are
+    never interpolated, reordered, or rounded. Grids that differ by more than that, or
+    that disagree in size or order, are a real mismatch and raise instead.
+    """
+    anchor = None
+    anchor_variable = ""
+    normalized = []
+    for part in parts:
+        if "lat" not in part.coords or "lat" not in part.dims:
+            normalized.append(part)
+            continue
+        latitude = np.asarray(part["lat"].values, "float64")
+        variable = _part_variable(part)
+        if anchor is None:
+            anchor, anchor_variable = latitude, variable
+            normalized.append(part)
+            continue
+        _check_latitude(model, variable, anchor_variable, anchor, latitude)
+        normalized.append(part.assign_coords(lat=(("lat",), anchor, dict(part["lat"].attrs))))
+    return normalized
+
+
 def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), names=None):
     """Merge per-variable statistics into the single CF-1.13 product dataset."""
     config = load_config(model)
@@ -164,7 +222,7 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
     reference = reference_period()["reference_period"]
     coordinate = grid["coordinate"]
     names = sorted(names or {part[key].attrs["source_variable"] for part in parts for key in part.data_vars})
-    months = [part.rename({"month": "time"}) for part in parts]
+    months = [part.rename({"month": "time"}) for part in normalize_latitude(parts, model)]
     combined = xr.merge(months, join="outer", compat="override")
     stray = sorted(dim for dim in combined.dims if dim not in (coordinate, "time", "lat", cf.BOUNDS_DIMENSION))
     if stray:
