@@ -7,7 +7,7 @@ NON_VERTICAL = ("time", "lat", "month", "lon", "latitude")
 PA_TO_HPA = {"pa": 1.0, "pascal": 1.0, "pascals": 1.0, "hpa": 100.0, "hectopascal": 100.0, "hectopascals": 100.0}
 
 PRESSURE_ATTRS = {"standard_name": "air_pressure", "units": "Pa", "positive": "down",
-                  "long_name": "air pressure on the common JuMACS pressure grid"}
+                  "long_name": "air pressure"}
 
 
 def pressure_report(value):
@@ -54,8 +54,30 @@ def native_pressure(ds, field):
     return None
 
 
-def interpolate_log_pressure(field, pressure, target_pa):
-    """Linear interpolation in log pressure on one column; never extrapolates."""
+def product_pressure(ds, field):
+    """Pressure in Pa for a field of a published climatology product.
+
+    Hybrid products publish a climatological ``air_pressure(time, lev, lat)``
+    field and point at it with ``pressure_field``; pressure-level products carry
+    their native pressure-valued coordinate instead, which ``native_pressure``
+    finds. Nothing is interpolated here: the pressure is read as published.
+    """
+    named = str(field.attrs.get("pressure_field", "")).strip()
+    if named and named in ds:
+        pressure = ds[named]
+        scale = pressure_scale(pressure.attrs) or 1.0
+        return (pressure * scale).assign_attrs(units="Pa")
+    return native_pressure(ds, field)
+
+
+def interpolate_log_pressure(field, pressure, target_pa, bridge_gaps=True):
+    """Linear interpolation in log pressure on one column; never extrapolates.
+
+    With ``bridge_gaps`` the missing samples of a column are set aside first, so a level is filled whenever two
+    remaining samples bracket it, however far apart. Without it the missing samples stay in place and act as
+    barriers: only levels whose own two neighbours are both present are filled, and a gap in the middle of a
+    profile remains a gap rather than becoming a long-distance interpolation.
+    """
     level = next((dim for dim in pressure.dims if dim in field.dims and dim in LEVEL_PRIORITY), None)
     if level is None:
         level = next((dim for dim in pressure.dims if dim in field.dims and dim not in NON_VERTICAL), None)
@@ -66,13 +88,25 @@ def interpolate_log_pressure(field, pressure, target_pa):
         raise ValueError("Pressure levels must be positive")
 
     def one_column(values, p):
-        valid = np.isfinite(values) & np.isfinite(p) & (p > 0)
-        if valid.sum() < 2:
+        placed = np.isfinite(p) & (p > 0)
+        if bridge_gaps:
+            valid = placed & np.isfinite(values)
+            if valid.sum() < 2:
+                return np.full(targets.shape, np.nan)
+            x = np.log(p[valid]); y = values[valid]
+            order = np.argsort(x)
+            x, y = x[order], y[order]
+            unique, first = np.unique(x, return_index=True)
+            if unique.size != x.size:
+                x, y = unique, y[np.sort(first)]
+                if x.size < 2:
+                    return np.full(targets.shape, np.nan)
+            return np.interp(np.log(targets), x, y, left=np.nan, right=np.nan)
+        if placed.sum() < 2:
             return np.full(targets.shape, np.nan)
-        x = np.log(p[valid]); y = values[valid]
-        order = np.argsort(x)
-        x, y = x[order], y[order]
-        return np.interp(np.log(targets), x, y, left=np.nan, right=np.nan)
+        x = np.log(p[placed]); y = np.where(np.isfinite(values[placed]), values[placed], np.nan)
+        order = np.argsort(x, kind="stable")
+        return np.interp(np.log(targets), x[order], y[order], left=np.nan, right=np.nan)
 
     result = xr.apply_ufunc(one_column, field, pressure, input_core_dims=[[level], [level]],
                             output_core_dims=[["pressure"]], exclude_dims={level} if level == "pressure" else set(),

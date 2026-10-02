@@ -60,31 +60,38 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     combined = xr.open_dataset(report["product"], decode_cf=False)
     assert report["conventions"] == "CF-1.13"
     assert report["variables_in_product"] == 3
-    levels = combined["pressure"].values
-    assert len(levels) == len(vertical_grid()["levels"]) and levels[0] == 100000.0 and levels[-1] == pytest.approx(0.002)
-    covered = levels >= 1000.0
+    levels = combined["lev"].values
+    assert np.array_equal(levels, np.array([100000., 10000., 1000.]))
+    assert combined.attrs["vertical_level_count"] == 3 and combined.attrs["vertical_level_counts"] == "lev=3"
     for name, value in (("ta", 220.0), ("o3", 8e-6), ("h2o", 5e-6)):
         mean = combined[f"{name}_mean"].isel(time=0)
-        assert np.allclose(mean.values[covered], value)
-        assert np.isnan(mean.values[~covered]).all()
+        assert np.allclose(mean.values, value)
         assert combined[f"{name}_n_years"].isel(time=0).max().item() == 30
         check = report["checks"][name]
-        assert check["dimensions"] == ["time", "pressure", "lat"]
-        assert check["n_years_max"] == 30 and check["n_years_min"] == 0
-        assert check["values_outside_native_coverage"] == 0
-        assert check["finite_fraction"] == round(covered.mean(), 4)
+        assert check["dimensions"] == ["time", "lev", "lat"]
+        assert check["vertical_coordinate"] == "lev" and check["vertical_level_count"] == 3
+        assert check["n_years_max"] == 30 and check["n_years_min"] == 30
+        assert check["finite_fraction"] == 1.0
+        assert check["pressure_min_pa"] == 1000.0 and check["pressure_max_pa"] == 100000.0
+        assert combined[f"{name}_mean"].attrs["native_level_count"] == 3
+        assert combined[f"{name}_mean"].attrs["on_application_pressure_grid"] == "false"
     assert report["checks"]["ta"]["pressure_plausible"] and report["checks"]["ta"]["pressure_monotonic"]
-    assert report["vertical_grid"]["level_count"] == len(levels)
-    assert report["vertical_grid"]["pressure_min_pa"] == 0.002
-    assert report["vertical_grid"]["pressure_max_pa"] == 100000.0
-    assert report["checks"]["ta"]["pressure_min_pa"] == 0.002
-    assert report["checks"]["ta"]["pressure_max_pa"] == 100000.0
-    assert f"{report['vertical_grid']['pressure_min_pa']:g}" == "0.002"
+    assert report["checks"]["ta"]["pressure_representation"] == "profile"
+    assert report["checks"]["h2o"]["pressure_representation"] == "coordinate"
+    grid = report["application_pressure_grid"]
+    assert grid["level_count"] == len(vertical_grid()["levels"]) == 124
+    assert grid["pressure_min_pa"] == 0.002 and grid["pressure_max_pa"] == 100000.0
+    assert grid["applied_at"].startswith("combination")
+    assert report["vertical"]["vertical_level_count"] == "3"
+    assert f"{grid['pressure_min_pa']:g}" == "0.002"
     assert combined.attrs["variable_count"] == 3
-    assert combined.attrs["vertical_coordinate"].startswith("pressure")
+    assert combined.attrs["vertical_coordinate"].startswith("'lev'")
+    assert combined.attrs["vertical_coordinate"].endswith("standard_name air_pressure)")
+    assert combined.attrs["application_pressure_grid"].startswith("124 levels from 100000 to 0.002 Pa")
+    assert combined.attrs["vertical_interpolation"].startswith("none")
     assert combined.attrs["vertical_extrapolation"].startswith("none")
-    assert combined["pressure"].attrs["units"] == "Pa"
-    assert combined["pressure"].attrs["standard_name"] == "air_pressure"
+    assert combined["lev"].attrs["units"] == "Pa"
+    assert combined["lev"].attrs["standard_name"] == "air_pressure"
     assert not [dim for dim in combined.dims if dim.endswith(("_lev", "_plev"))]
     assert combined["o3_mean"].attrs["source_variable"] == "o3"
     assert combined["o3_mean"].attrs["cell_methods"] == "longitude: mean time: mean within years time: mean over years"
@@ -97,7 +104,8 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert "time:bounds" not in combined["time"].attrs
     assert combined["climatology_bounds"].dims == ("time", "nv")
     assert "source_units" not in combined["o3_n_years"].attrs
-    assert set(combined["o3_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable"}
+    assert set(combined["o3_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable",
+                                                "pressure_coordinate"}
     combined.close()
 
 

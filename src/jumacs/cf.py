@@ -180,11 +180,21 @@ class ProductProblem(ValueError):
     """A published product that does not meet the CF or methodology contract."""
 
 
-def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
-    """Structural and methodological checks on a written product (no external checker)."""
+PRESSURE_FIELD = "air_pressure"
+
+
+def _statistic_fields(names, statistics):
+    return {f"{name}_{statistic}" for name in names for statistic in statistics}
+
+
+def _pressure_fields(ds):
+    """Published pressure fields: the shared one, or one per native vertical dimension."""
+    return sorted(name for name in ds.data_vars
+                  if name == PRESSURE_FIELD or (name.startswith(f"{PRESSURE_FIELD}_") and name != PRESSURE_FIELD))
+
+
+def _validate_common(ds, names, statistics):
     problems = []
-    grid = grid or {}
-    coordinate = grid.get("coordinate", "pressure")
     if str(ds.attrs.get("Conventions", "")).strip() != CONVENTIONS:
         problems.append(f"Conventions must be {CONVENTIONS}, found {ds.attrs.get('Conventions')!r}")
     period = str(ds.attrs.get("climatology_period", "")).strip()
@@ -226,25 +236,6 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
                 problems.append(f"{bounds_name} must not carry a fill value")
         if "units" not in time.attrs or "calendar" not in time.attrs:
             problems.append("time needs units and calendar")
-    if coordinate not in ds.coords:
-        problems.append(f"the shared {coordinate} coordinate is missing")
-    else:
-        pressure = ds[coordinate]
-        if pressure.dtype != np.float64:
-            problems.append(f"{coordinate} must be float64, found {pressure.dtype}")
-        if pressure.attrs.get("standard_name") != "air_pressure" or pressure.attrs.get("units") != "Pa":
-            problems.append(f"{coordinate} must be air_pressure in Pa")
-        if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
-            problems.append(f"{coordinate} must carry positive=down and axis=Z")
-        if grid.get("levels") is not None:
-            expected_levels = np.asarray(grid["levels"], float)
-            if pressure.size != expected_levels.size:
-                problems.append(f"{coordinate} has {pressure.size} levels, the configured common grid has "
-                                f"{expected_levels.size}; the climatology was built on another vertical grid and "
-                                "must be rebuilt with jumacs climatology")
-            elif not np.allclose(pressure.values, expected_levels):
-                problems.append(f"{coordinate} is not the configured common grid; the climatology was built on "
-                                "another vertical grid and must be rebuilt with jumacs climatology")
     if "lat" not in ds.coords:
         problems.append("lat is missing")
     else:
@@ -252,9 +243,7 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
             problems.append(f"lat must be float64, found {ds['lat'].dtype}")
         if ds["lat"].attrs.get("units") != "degrees_north":
             problems.append("lat must be degrees_north")
-    if any(name.endswith("_air_pressure") for name in ds.data_vars):
-        problems.append("per-variable air_pressure fields must not be published; the pressure grid is shared")
-    expected = {f"{name}_{statistic}" for name in names for statistic in statistics}
+    expected = _statistic_fields(names, statistics)
     present = set(ds.data_vars)
     for missing in sorted(expected - present):
         problems.append(f"missing field {missing}")
@@ -276,12 +265,126 @@ def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER):
             standard_name = variable.attrs.get("standard_name", "")
             if standard_name and valid_standard_name(standard_name) is None:
                 problems.append(f"{field} carries an unrecognised standard_name {standard_name!r}")
-            if variable.ndim == 3 and list(variable.dims) != ["time", coordinate, "lat"]:
-                problems.append(f"{field} must be ordered (time, {coordinate}, lat), found {list(variable.dims)}")
-            elif variable.ndim == 2 and list(variable.dims) != ["time", "lat"]:
-                problems.append(f"{field} must be ordered (time, lat), found {list(variable.dims)}")
-            elif variable.ndim not in (2, 3):
+            if variable.ndim not in (2, 3):
                 problems.append(f"{field} must be two- or three-dimensional, found {variable.ndim}")
+            elif list(variable.dims)[:1] != ["time"] or variable.dims[-1] != "lat":
+                problems.append(f"{field} must start with time and end with lat, found {list(variable.dims)}")
+    return problems
+
+
+def _validate_native_vertical(ds, names, statistics, grid=None):
+    """An individual product: native latitude, native vertical, pressure of those levels published.
+
+    The shared application grid is rejected here on purpose. A product that already
+    sits on it was built by an earlier generation of this code and mixes several
+    models' native grids into one; it has to be rebuilt from the monthly zonal
+    intermediates, which still hold the model as it ran.
+    """
+    problems = []
+    application_levels = np.asarray((grid or {}).get("levels") or [], float)
+    statistics_fields = sorted(_statistic_fields(names, statistics) & set(ds.data_vars))
+    for name in _pressure_fields(ds):
+        pressure = ds[name]
+        if pressure.attrs.get("standard_name") != PRESSURE_FIELD or pressure.attrs.get("units") != "Pa":
+            problems.append(f"{name} must be air_pressure in Pa")
+        if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
+            problems.append(f"{name} must carry positive=down and axis=Z")
+        if list(pressure.dims)[:1] != ["time"] or pressure.dims[-1] != "lat" or pressure.ndim != 3:
+            problems.append(f"{name} must be ordered (time, <native level>, lat), found {list(pressure.dims)}")
+    published = {str(ds[field].attrs.get("pressure_field", "")).strip() for field in statistics_fields}
+    for name in _pressure_fields(ds):
+        if name not in published:
+            problems.append(f"{name} is published but no field names it in pressure_field")
+    for field in statistics_fields:
+        variable = ds[field]
+        if variable.ndim != 3:
+            continue
+        level = variable.dims[1]
+        if level == "time" or level == "lat":
+            problems.append(f"{field} has no vertical dimension: {list(variable.dims)}")
+            continue
+        named = str(variable.attrs.get("pressure_field", "")).strip()
+        if named:
+            if named not in ds:
+                problems.append(f"{field} names pressure field {named!r}, which is missing")
+            elif list(ds[named].dims) != list(variable.dims):
+                problems.append(f"{field} and {named} must share their dimensions, found {list(variable.dims)} "
+                                f"and {list(ds[named].dims)}")
+            continue
+        if level in ds.coords:
+            pressure = ds[level]
+            if application_levels.size and pressure.size == application_levels.size and \
+                    np.allclose(pressure.values, application_levels):
+                problems.append(f"{field} sits on the {application_levels.size} level application pressure grid; an "
+                                f"individual climatology stays on the native levels of its model and must be "
+                                f"rebuilt with jumacs climatology (the monthly zonal intermediates are reused)")
+                continue
+            if pressure.attrs.get("standard_name") != PRESSURE_FIELD or pressure.attrs.get("units") != "Pa":
+                problems.append(f"{field} is on '{level}' but {level} is not air_pressure in Pa; a hybrid level "
+                                f"index needs a published pressure field")
+            elif pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
+                problems.append(f"{level} must carry positive=down and axis=Z")
+            elif not bool(np.isfinite(pressure.values).all()) or not bool((pressure.values > 0).all()):
+                problems.append(f"{level} must be finite and positive")
+            elif bool(np.any(np.diff(pressure.values) == 0)):
+                problems.append(f"{level} must not repeat a pressure level")
+            else:
+                continue
+        problems.append(f"{field} is three-dimensional on '{level}' but neither names a pressure field nor has a "
+                        f"pressure-valued {level} coordinate")
+    return problems
+
+
+def _validate_application_vertical(ds, names, statistics, grid, latitude_bands=None):
+    """A combined product: the shared pressure grid, optionally the fixed latitude bands."""
+    problems = []
+    grid = grid or {}
+    coordinate = grid.get("coordinate", "pressure")
+    if _pressure_fields(ds):
+        problems.append(f"per-variable pressure fields must not be published on the application grid; "
+                        f"{coordinate} is shared")
+    if coordinate not in ds.coords:
+        problems.append(f"the shared {coordinate} coordinate is missing")
+        return problems
+    pressure = ds[coordinate]
+    if pressure.dtype != np.float64:
+        problems.append(f"{coordinate} must be float64, found {pressure.dtype}")
+    if pressure.attrs.get("standard_name") != PRESSURE_FIELD or pressure.attrs.get("units") != "Pa":
+        problems.append(f"{coordinate} must be air_pressure in Pa")
+    if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
+        problems.append(f"{coordinate} must carry positive=down and axis=Z")
+    if grid.get("levels") is not None:
+        expected_levels = np.asarray(grid["levels"], float)
+        if pressure.size != expected_levels.size:
+            problems.append(f"{coordinate} has {pressure.size} levels, the application grid has "
+                            f"{expected_levels.size}; the product was built on another vertical grid and must be "
+                            f"rebuilt")
+        elif not np.allclose(pressure.values, expected_levels):
+            problems.append(f"{coordinate} is not the configured application grid; the product was built on "
+                            "another vertical grid and must be rebuilt")
+    if latitude_bands is not None and ds.sizes.get("lat") != latitude_bands:
+        problems.append(f"lat must hold the {latitude_bands} fixed latitude bands, found {ds.sizes.get('lat')}")
+    for field in sorted(_statistic_fields(names, statistics) & set(ds.data_vars)):
+        variable = ds[field]
+        if variable.ndim == 3 and list(variable.dims) != ["time", coordinate, "lat"]:
+            problems.append(f"{field} must be ordered (time, {coordinate}, lat), found {list(variable.dims)}")
+    return problems
+
+
+def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER, kind="individual", latitude_bands=None):
+    """Structural and methodological checks on a written product (no external checker).
+
+    ``kind`` selects the vertical contract: ``"individual"`` for one model's own
+    climatology, which stays on the native grid and publishes the pressure of its
+    levels; ``"application"`` for a combined product on the shared grid.
+    """
+    problems = _validate_common(ds, names, statistics)
+    if kind == "individual":
+        problems.extend(_validate_native_vertical(ds, names, statistics, grid))
+    elif kind == "application":
+        problems.extend(_validate_application_vertical(ds, names, statistics, grid, latitude_bands))
+    else:
+        raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'application'")
     return problems
 
 

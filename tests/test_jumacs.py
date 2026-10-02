@@ -137,14 +137,16 @@ def test_climatology_provenance_and_cf_product(tmp_path, monkeypatch):
         assert root.attrs["source_time_coverage_end"].startswith("2014")
         assert root.o3_n_years.isel(time=0).max().item() == 30
         assert root.o3_mean.attrs["source_variable"] == "o3"
-        assert root.o3_mean.dims == ("time", "pressure", "lat")
-        assert root.attrs["vertical_coordinate"].startswith("pressure")
-        assert root.attrs["vertical_interpolation"].startswith("monthly zonal fields regridded linearly in log(pressure)")
+        assert root.o3_mean.dims == ("time", "plev", "lat")
+        assert root.attrs["vertical_coordinate"].startswith("'plev'")
+        assert root.attrs["vertical_interpolation"].startswith("none")
         assert root.attrs["vertical_extrapolation"].startswith("none")
-        above_top = (root.pressure < 10000.).values
-        mean = root.o3_mean.isel(time=0).transpose("pressure", "lat").values
-        assert np.isnan(mean[above_top]).all()
-        assert np.isfinite(mean[~above_top]).all()
+        assert root.attrs["vertical_level_count"] == 2
+        assert root.attrs["application_pressure_grid"].startswith("124 levels")
+        assert root.o3_mean.attrs["on_application_pressure_grid"] == "false"
+        assert root.o3_mean.attrs["native_level_count"] == 2
+        assert root.o3_mean.attrs["native_pressure_kind"] == "coordinate"
+        assert np.isfinite(root.o3_mean.isel(time=0).transpose("plev", "lat").values).all()
         root.attrs["time_coverage_start"] = root.attrs["source_time_coverage_start"]
         assert any("time_coverage_start" in problem for problem in cf.validate_product(root, names=("o3",)))
 

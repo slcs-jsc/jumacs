@@ -11,6 +11,8 @@ from jumacs.config import load_config, vertical_grid
 
 GRID = vertical_grid()
 LEVELS = np.asarray(GRID["levels"], float)
+# A vertical grid of the model itself, which the application grid deliberately is not.
+NATIVE = np.logspace(5.0, -0.5, 67)
 
 # A 96-point zonal axis of the SOCOL type, with the extrema seen in the archive.
 LAT = np.linspace(-88.57216851400727, 88.57216851400727, 96)
@@ -94,10 +96,10 @@ def test_already_identical_latitude_coordinates_pass_through_untouched():
 
 def write_zonal(path, name, lat, value):
     ds = xr.Dataset(
-        {name: (("time", "plev", "lat"), np.broadcast_to(np.array(value, float), (24, LEVELS.size, lat.size)).copy(),
+        {name: (("time", "plev", "lat"), np.broadcast_to(np.array(value, float), (24, NATIVE.size, lat.size)).copy(),
                 {"units": "mol mol-1"})},
         coords={"time": xr.date_range("2000-01", periods=24, freq="MS", use_cftime=True),
-                "plev": ("plev", LEVELS, {"units": "Pa", "standard_name": "air_pressure"}),
+                "plev": ("plev", NATIVE, {"units": "Pa", "standard_name": "air_pressure"}),
                 "lat": ("lat", lat)})
     ds.to_netcdf(path)
 
@@ -116,3 +118,6 @@ def test_socol_like_zonal_grids_yield_one_axis_in_the_final_product(tmp_path, mo
         assert ds.lat.dtype == np.dtype("float64")
         for name in ("o3", "ta"):
             assert np.isfinite(ds[f"{name}_mean"].values).mean() == 1.0
+            assert ds[f"{name}_mean"].dims == ("time", "plev", "lat")
+        assert ds.sizes["plev"] == NATIVE.size and np.allclose(ds.plev.values, NATIVE)
+        assert ds.o3_mean.attrs["on_application_pressure_grid"] == "false"

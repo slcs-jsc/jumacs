@@ -1,4 +1,10 @@
-"""Extension coverage is built from published products and never changes them."""
+"""Extension coverage is built from published products and never changes them.
+
+Products stay on the native grid of their model, so coverage measures what a field
+would provide once the combination moves it onto the shared application pressure
+grid. That move is reproduced here in memory, exactly as the combination performs
+it, and is never written back into a product.
+"""
 import csv
 import json
 import numpy as np
@@ -10,32 +16,50 @@ START, END = 1985, 2014
 LATS = (-45.0, 0.0, 45.0)
 SAMPLE, LEVEL = 0.9, 0.5
 LEVEL_COUNT = len(config.vertical_grid()["levels"])
-FULL = (0, LEVEL_COUNT)
+NATIVE_COUNT = 100
+NATIVE_LEVEL = "plev"
+FULL = (0, NATIVE_COUNT)
 
 
 def levels():
     return np.asarray(config.vertical_grid()["levels"], "float64")
 
 
-def write_product(workspace, model, fields, grid_levels=None):
-    """A minimal but contract-valid climatology product for one model."""
-    coordinate = config.vertical_grid()["coordinate"]
-    pressure = np.asarray(grid_levels if grid_levels is not None else levels(), "float64")
+def native_levels():
+    """The native grid of one model: its own levels, not the application grid."""
+    return np.logspace(5, -3.5, NATIVE_COUNT)
+
+
+def span(window, native=None):
+    """The pressure range a block of native levels spans: (highest, lowest)."""
+    native = native_levels() if native is None else native
+    return float(native[window[0]]), float(native[window[1] - 1])
+
+
+def inside(grid, top_pa, bottom_pa):
+    """Application grid levels a native profile reaching top..bottom can supply."""
+    grid = np.asarray(grid, float)
+    return grid[(grid <= top_pa) & (grid >= bottom_pa)]
+
+
+def write_product(workspace, model, fields, native=None):
+    """A minimal but contract-valid individual product: native levels, pressure-valued coordinate."""
+    pressure = np.asarray(native if native is not None else native_levels(), "float64")
     reference = config.reference_period()["reference_period"]["nominal_reference_year"]
     time = cf.climatology_time(START, END, reference)
     variables = {"climatology_bounds": (("time", "nv"), time["bounds"], {"units": time["units"]})}
     for stem, spec in fields.items():
         flat = spec.get("two_dimensional", False)
-        dims = ("time", "lat") if flat else ("time", coordinate, "lat")
+        dims = ("time", "lat") if flat else ("time", NATIVE_LEVEL, "lat")
         shape = (12, len(LATS)) if flat else (12, pressure.size, len(LATS))
         mean = np.zeros(shape, "float32") if flat else np.full(shape, np.nan, "float32")
         if flat:
             mean[...] = spec.get("value", 1.0)
         else:
-            for window in [spec.get("levels", (0, pressure.size))] + spec.get("blocks", []):
-                months = window[2] if len(window) > 2 else spec.get("sample_count")
-                block = slice(None) if months is None else slice(0, months)
-                mean[block, window[0]:window[1], :] = spec.get("value", 1.0)
+            for block in [spec.get("levels", (0, pressure.size))] + spec.get("blocks", []):
+                months = block[2] if len(block) > 2 else spec.get("sample_count")
+                rows = slice(None) if months is None else slice(0, months)
+                mean[rows, block[0]:block[1], :] = spec.get("value", 1.0)
         for statistic in cf.STATISTIC_ORDER:
             values = (np.ones(shape, "int16") if statistic == "n_years" else
                       (mean if statistic == "mean" else np.abs(mean).astype("float32")))
@@ -44,13 +68,49 @@ def write_product(workspace, model, fields, grid_levels=None):
                                                                "cell_methods": cf.cell_methods(statistic)})
     coordinates = {
         "time": (("time",), time["values"], dict(time["attrs"])),
-        "pressure": (("pressure",), pressure, {"standard_name": "air_pressure", "units": "Pa",
-                                               "positive": "down", "axis": "Z"}),
+        NATIVE_LEVEL: ((NATIVE_LEVEL,), pressure, {"standard_name": "air_pressure", "units": "Pa",
+                                                   "positive": "down", "axis": "Z"}),
         "lat": (("lat",), np.asarray(LATS, "float64"), {"standard_name": "latitude",
                                                         "units": "degrees_north"})}
     attrs = {"Conventions": cf.CONVENTIONS, "climatology_period": f"{START}-{END}",
              "time_coverage_start": f"{START}-01-01", "time_coverage_end": f"{END}-12-31",
              "reference_period_years": END - START + 1, "title": "synthetic extension coverage product"}
+    directory = workspace / config.load_config(model)["paths"]["climatology"]
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"jumacs_{config.model_metadata(model)['slug']}_climatology_{START}-{END}.nc"
+    xr.Dataset(variables, coordinates, attrs).to_netcdf(
+        path, encoding={"climatology_bounds": {"_FillValue": None}})
+    return path
+
+
+def write_hybrid_product(workspace, model, native, reaches_pa):
+    """A hybrid product whose native pressure depends on latitude, published as a climatology field."""
+    native = np.asarray(native, "float64")
+    reference = config.reference_period()["reference_period"]["nominal_reference_year"]
+    time = cf.climatology_time(START, END, reference)
+    shape = (12, native.size, len(LATS))
+    pressure = np.broadcast_to(native[None, :, None], shape).copy()
+    for index, limit in reaches_pa.items():
+        pressure[:, native < limit, index] = np.nan
+    variables = {"climatology_bounds": (("time", "nv"), time["bounds"], {"units": time["units"]}),
+                 "air_pressure": (("time", "lev", "lat"), pressure,
+                                  {"standard_name": "air_pressure", "units": "Pa", "positive": "down", "axis": "Z",
+                                   "cell_methods": "time: mean"})}
+    values = np.where(np.isfinite(pressure), 1e-6, np.nan).astype("float32")
+    for statistic in cf.STATISTIC_ORDER:
+        data = np.ones(shape, "int16") if statistic == "n_years" else (values if statistic == "mean" else
+                                                                       np.abs(values).astype("float32"))
+        variables[f"o3_{statistic}"] = (("time", "lev", "lat"), data,
+                                        {"units": "1" if statistic == "n_years" else "1e-6",
+                                         "cell_methods": cf.cell_methods(statistic),
+                                         "pressure_field": "air_pressure"})
+    coordinates = {"time": (("time",), time["values"], dict(time["attrs"])),
+                   "lev": (("lev",), np.arange(native.size, dtype="float64"), {"axis": "Z", "positive": "down"}),
+                   "lat": (("lat",), np.asarray(LATS, "float64"), {"standard_name": "latitude",
+                                                                   "units": "degrees_north"})}
+    attrs = {"Conventions": cf.CONVENTIONS, "climatology_period": f"{START}-{END}",
+             "time_coverage_start": f"{START}-01-01", "time_coverage_end": f"{END}-12-31",
+             "reference_period_years": END - START + 1, "title": "synthetic hybrid coverage product"}
     directory = workspace / config.load_config(model)["paths"]["climatology"]
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"jumacs_{config.model_metadata(model)['slug']}_climatology_{START}-{END}.nc"
@@ -85,15 +145,35 @@ def test_an_overlapping_model_that_stops_lower_is_an_extension_candidate(workspa
     write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
+    reached = inside(grid, *span((0, 70)))
     assert ozone["extension_status"] == "extension_candidate"
-    assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["native_level_count"] == NATIVE_COUNT
+    assert ozone["min_usable_pressure_pa"] == pytest.approx(reached.min())
     assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[0])
     assert ozone["waccmx_min_usable_pressure_pa"] == pytest.approx(grid[-1])
-    assert ozone["overlap_level_count"] == 70
-    assert ozone["overlap_min_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["overlap_level_count"] == reached.size
+    assert ozone["overlap_min_pressure_pa"] == pytest.approx(reached.min())
     assert ozone["overlap_max_pressure_pa"] == pytest.approx(grid[0])
     assert ozone["waccmx_extends_upward"] is True
     assert ozone["application_focus"] is True and ozone["group"] == "ozone"
+
+
+def test_nothing_is_invented_above_or_below_the_native_reach_of_the_model(workspace):
+    grid = levels()
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (0, 70)}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
+    fractions = row_for(matrix(["CMAM", "WACCM-X"])[1], "CMAM", "O3")["level_finite_fractions"]
+    top, bottom = span((0, 70))
+    assert len(fractions) == LEVEL_COUNT
+    assert all(fractions[index] == 0.0 for index in np.flatnonzero(grid < bottom))
+    assert all(fractions[index] == 1.0 for index in np.flatnonzero((grid <= top) & (grid >= bottom)))
+    assert ozone_native(workspace) == (bottom, top)
+
+
+def ozone_native(workspace):
+    """The pressure range where the field itself has samples, not merely the levels it was written on."""
+    entry = coverage.product_inventory("CMAM", START, END, SAMPLE)["fields"]["o3"]
+    return entry["native_pressure_min_pa"], entry["native_pressure_max_pa"]
 
 
 def test_the_lower_extent_is_the_valid_extent_so_terrain_thinning_does_not_hide_1000_hpa(workspace):
@@ -104,22 +184,28 @@ def test_the_lower_extent_is_the_valid_extent_so_terrain_thinning_does_not_hide_
     ozone = row_for(rows, "CMAM", "O3")
     assert ozone["max_valid_pressure_pa"] == pytest.approx(100000.0) == pytest.approx(grid[0])
     assert ozone["max_any_pressure_pa"] == ozone["max_valid_pressure_pa"]
-    assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[1])
-    assert ozone["level_finite_fractions"][0] == pytest.approx(0.5)
-    assert ozone["levels_any_finite"] == 70 and ozone["levels_usable"] == 69
+    assert ozone["max_usable_pressure_pa"] == pytest.approx(inside(grid, *span((1, 70))).max())
+    assert ozone["max_usable_pressure_pa"] < ozone["max_valid_pressure_pa"]
+    fractions = ozone["level_finite_fractions"]
+    thinned = [index for index, value in enumerate(fractions) if 0.0 < value < SAMPLE]
+    assert thinned and grid[thinned[0]] == pytest.approx(grid[0])
+    assert fractions[thinned[0]] == pytest.approx(0.5)
+    assert ozone["levels_any_finite"] == inside(grid, *span((0, 70))).size
+    assert ozone["levels_usable"] == inside(grid, *span((1, 70))).size
     assert ozone["contiguous_usable"] is True
 
 
 def test_a_sparse_upper_level_does_not_become_the_usable_top(workspace):
     grid = levels()
-    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (0, 70), "blocks": [(90, 91, 3)]}})
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (0, 70), "blocks": [(88, 91, 3)]}})
     write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
-    assert ozone["min_any_pressure_pa"] == pytest.approx(grid[90])
-    assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["min_any_pressure_pa"] == pytest.approx(inside(grid, *span((88, 91))).min())
+    assert ozone["min_usable_pressure_pa"] == pytest.approx(inside(grid, *span((0, 70))).min())
     assert ozone["min_any_pressure_pa"] < ozone["min_usable_pressure_pa"]
-    assert ozone["overlap_min_pressure_pa"] == pytest.approx(grid[69])
+    assert ozone["overlap_min_pressure_pa"] == ozone["min_usable_pressure_pa"]
+    assert ozone["levels_any_finite"] == inside(grid, *span((0, 70))).size + inside(grid, *span((88, 91))).size
     assert ozone["waccmx_extends_upward"] is True and ozone["extension_status"] == "extension_candidate"
 
 
@@ -140,15 +226,15 @@ def test_the_valid_lower_bound_is_descriptive_and_leaves_the_decision_alone(work
 def test_ranges_that_do_not_meet_leave_no_overlap(workspace):
     grid = levels()
     write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": (0, 20)}})
-    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": (60, 101)}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": (60, NATIVE_COUNT)}})
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
     assert ozone["extension_status"] == "no_overlap"
     assert ozone["overlap_exists"] is False and ozone["overlap_level_count"] == 0
     assert ozone["overlap_min_pressure_pa"] is None and ozone["overlap_max_pressure_pa"] is None
     assert ozone["waccmx_extends_upward"] is False
-    assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[19])
-    assert ozone["waccmx_min_usable_pressure_pa"] == pytest.approx(grid[100])
+    assert ozone["min_usable_pressure_pa"] == pytest.approx(inside(grid, *span((0, 20))).min())
+    assert ozone["waccmx_min_usable_pressure_pa"] == pytest.approx(grid[-1])
 
 
 def test_overlap_without_upward_reach_is_not_a_candidate(workspace):
@@ -158,8 +244,8 @@ def test_overlap_without_upward_reach_is_not_a_candidate(workspace):
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
     assert ozone["extension_status"] == "overlap_no_extension"
-    assert ozone["overlap_level_count"] == 50
-    assert ozone["overlap_min_pressure_pa"] == pytest.approx(grid[49])
+    assert ozone["overlap_level_count"] == inside(grid, *span((0, 50))).size
+    assert ozone["overlap_min_pressure_pa"] == pytest.approx(inside(grid, *span((0, 50))).min())
     assert ozone["waccmx_extends_upward"] is False
 
 
@@ -169,13 +255,17 @@ def test_overlap_is_taken_from_the_masks_so_internal_gaps_stay_visible(workspace
     write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
-    assert ozone["levels_usable"] == 41
+    blocks = inside(grid, *span((0, 20))).size + inside(grid, *span((60, 81))).size
+    gap = (grid <= float(native_levels()[19])) & (grid >= float(native_levels()[60]))
+    assert ozone["levels_usable"] == blocks
     assert ozone["contiguous_usable"] is False
-    assert ozone["min_usable_pressure_pa"] == pytest.approx(grid[80])
+    assert ozone["min_usable_pressure_pa"] == pytest.approx(inside(grid, *span((60, 81))).min())
     assert ozone["max_usable_pressure_pa"] == pytest.approx(grid[0])
-    assert ozone["overlap_level_count"] == 41
+    assert ozone["overlap_level_count"] == blocks
     assert ozone["extension_status"] == "extension_candidate"
-    assert ozone["level_finite_fractions"].count(0.0) == LEVEL_COUNT - 41
+    fractions = ozone["level_finite_fractions"]
+    assert all(fractions[index] == 0.0 for index in np.flatnonzero(gap))
+    assert fractions.count(0.0) == LEVEL_COUNT - blocks
 
 
 def test_a_level_needs_most_of_its_samples_before_it_counts(workspace):
@@ -184,12 +274,33 @@ def test_a_level_needs_most_of_its_samples_before_it_counts(workspace):
     write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": FULL}})
     _, rows = matrix(["CMAM", "WACCM-X"])
     ozone = row_for(rows, "CMAM", "O3")
-    assert ozone["levels_any_finite"] == 70 and ozone["levels_usable"] == 0
-    assert ozone["min_usable_pressure_pa"] is None and ozone["min_any_pressure_pa"] == pytest.approx(grid[69])
+    reached = inside(grid, *span((0, 70)))
+    assert ozone["levels_any_finite"] == reached.size and ozone["levels_usable"] == 0
+    assert ozone["min_usable_pressure_pa"] is None
+    assert ozone["min_any_pressure_pa"] == pytest.approx(reached.min())
     assert ozone["contiguous_usable"] is None and ozone["broadly_usable"] is False
     assert ozone["extension_status"] == "no_overlap"
+    assert all(ozone["level_finite_fractions"][index] == pytest.approx(0.5) for index in
+               np.flatnonzero((grid <= reached.max()) & (grid >= reached.min())))
     _, relaxed = matrix(["CMAM", "WACCM-X"], sample_fraction=0.5)
     assert row_for(relaxed, "CMAM", "O3")["extension_status"] == "extension_candidate"
+
+
+def test_coverage_follows_the_latitude_rows_that_the_model_reaches(workspace):
+    grid = levels()
+    native = np.logspace(5, -3.5, 60)
+    write_hybrid_product(workspace, "CMAM", native, {1: 100.0})
+    entry = coverage.product_inventory("CMAM", START, END, SAMPLE)["fields"]["o3"]
+    edge = min(float(value) for value in native if value >= 100.0)
+    assert entry["native_level_count"] == native.size
+    assert entry["native_pressure_min_pa"] == pytest.approx(float(native[-1]))
+    assert entry["native_pressure_max_pa"] == pytest.approx(float(native[0]))
+    assert entry["levels_usable"] == inside(grid, float(native[0]), edge).size
+    assert entry["min_usable_pressure_pa"] == pytest.approx(inside(grid, float(native[0]), edge).min())
+    assert entry["min_any_pressure_pa"] == pytest.approx(grid[-1])
+    partial = [index for index, value in enumerate(entry["level_finite_fractions"]) if 0.0 < value < SAMPLE]
+    assert partial and all(entry["level_finite_fractions"][index] == pytest.approx(2 / 3) for index in partial)
+    assert entry["grid_finite_fraction"] > entry["finite_fraction"]
 
 
 def test_a_missing_waccmx_variable_is_kept_apart_from_an_unmapped_species(workspace):
@@ -217,6 +328,8 @@ def test_absent_and_two_dimensional_variables_are_not_applicable(workspace):
     surface = row_for(rows, "CMAM", "surface_pressure")
     assert surface["extension_status"] == "not_applicable" and surface["is_3d"] is False
     assert surface["present"] is True and surface["levels_usable"] is None and surface["units"] == "Pa"
+    assert surface["native_level_count"] == 0 and surface["native_pressure_max_pa"] is None
+    assert surface["grid_finite_fraction"] is None
     temperature = row_for(rows, "CMAM", "temperature")
     assert temperature["extension_status"] == "not_applicable" and temperature["present"] is False
     assert temperature["product_variable"] == "" and temperature["level_finite_fractions"] == []
@@ -267,24 +380,36 @@ def test_selected_models_must_have_a_product(workspace):
         coverage.product_models("all", START - 10, END - 10)
 
 
-def test_a_product_on_another_pressure_grid_is_refused(workspace):
-    write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, grid_levels=np.logspace(5, -1, 41))
-    with pytest.raises(coverage.CoverageMatrixProblem, match="configured common grid"):
-        coverage.product_inventory("CMAM", START, END, SAMPLE)
+def test_a_native_grid_of_any_resolution_is_accepted(workspace):
+    coarse = np.logspace(5, -1, 41)
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, native=coarse)
+    entry = coverage.product_inventory("CMAM", START, END, SAMPLE)["fields"]["o3"]
+    assert entry["native_level_count"] == 41
+    assert entry["levels_usable"] == inside(levels(), float(coarse[0]), float(coarse[-1])).size
+    assert float(entry["native_pressure_min_pa"]) == pytest.approx(float(coarse[-1]))
 
 
-def test_a_product_on_the_previous_101_level_grid_demands_a_rebuild(workspace):
-    write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, grid_levels=np.logspace(5, -5, 101))
+def test_a_product_on_the_application_pressure_grid_demands_a_rebuild(workspace):
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, native=levels())
     with pytest.raises(coverage.CoverageMatrixProblem, match="must be rebuilt with jumacs climatology"):
         coverage.product_inventory("CMAM", START, END, SAMPLE)
 
 
-def test_a_product_on_the_previous_grid_is_rejected_level_by_level(workspace):
-    previous = np.logspace(5, -5, 101)
-    path = write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, grid_levels=previous)
+def test_a_product_on_the_application_grid_is_rejected_level_by_level(workspace):
+    path = write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}}, native=levels())
     with xr.open_dataset(path, decode_cf=False) as ds:
-        with pytest.raises(cf.ProductProblem, match="the configured common grid"):
+        with pytest.raises(cf.ProductProblem, match="application pressure grid"):
             cf.assert_product(ds, names=("o3",), grid=config.vertical_grid())
+
+
+def test_a_three_dimensional_field_without_any_pressure_description_is_refused(workspace):
+    path = write_product(workspace, "CMAM", {"o3": {"units": "1e-6"}})
+    dataset = xr.load_dataset(path)
+    dataset = dataset.rename({NATIVE_LEVEL: "ilev"}).assign_coords(
+        ilev=("ilev", np.arange(dataset.sizes[NATIVE_LEVEL], dtype="float64")))
+    dataset.to_netcdf(path)
+    with pytest.raises(coverage.CoverageMatrixProblem, match="pressure-valued"):
+        coverage.product_inventory("CMAM", START, END, SAMPLE)
 
 
 def test_an_older_grouped_product_is_refused_rather_than_read(workspace):
@@ -307,12 +432,17 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     ozone, methane, surface = table[("CMAM", "O3")], table[("CMAM", "CH4")], table[("CMAM", "surface_pressure")]
     assert ozone["max_usable_pressure_pa"] == "100000.0"
     assert ozone["max_valid_pressure_pa"] == "100000.0" and ozone["waccmx_max_valid_pressure_pa"] == "100000.0"
-    assert float(ozone["min_usable_pressure_pa"]) == pytest.approx(levels()[69])
-    assert float(ozone["overlap_min_pressure_pa"]) == pytest.approx(levels()[69])
+    assert float(ozone["min_usable_pressure_pa"]) == pytest.approx(inside(levels(), *span((0, 70))).min())
+    assert float(ozone["overlap_min_pressure_pa"]) == pytest.approx(inside(levels(), *span((0, 70))).min())
     assert float(ozone["waccmx_min_usable_pressure_pa"]) == pytest.approx(levels()[-1])
+    assert float(ozone["native_pressure_min_pa"]) == pytest.approx(float(native_levels()[69]))
+    assert int(ozone["native_level_count"]) == NATIVE_COUNT
+    assert float(ozone["finite_fraction"]) == pytest.approx(70 / NATIVE_COUNT)
+    assert float(ozone["grid_finite_fraction"]) == pytest.approx(inside(levels(), *span((0, 70))).size / LEVEL_COUNT)
     assert ozone["extension_status"] == "extension_candidate"
     assert methane["extension_status"] == "no_waccmx_variable"
     assert surface["extension_status"] == "not_applicable" and surface["levels_usable"] == ""
+    assert surface["native_level_count"] == "0" and surface["grid_finite_fraction"] == ""
     assert all(column not in table[("CMAM", "O3")] for column in
                ("ccmi_common_min_usable_pressure_pa", "ccmi_union_pressure_range", "ccmi_all_present"))
     assert not any(model == "WACCM-X" for model, _ in table)
@@ -324,9 +454,12 @@ def test_files_keep_pa_in_machine_outputs_and_hpa_in_markdown(workspace):
     assert document["donor_fields"]["O3"]["levels_usable"] == len(levels())
     assert document["products"]["CMAM"].endswith("jumacs_cmam_refd1_climatology_1985-2014.nc")
     record = row_for(document["rows"], "CMAM", "O3")
-    assert record["level_finite_fractions"] == [1.0] * 70 + [0.0] * (len(levels()) - 70)
+    reached = inside(levels(), *span((0, 70)))
+    assert record["level_finite_fractions"] == [1.0 if pressure in reached else 0.0 for pressure in levels()]
     assert record["application_focus"] is True
-    assert "max_valid_pressure_pa" in document["definitions"]
+    for key in ("max_valid_pressure_pa", "grid_finite_fraction", "native_level_count",
+                "native_pressure_min_pa", "native_pressure_max_pa"):
+        assert key in document["definitions"]
     markdown = (workspace / "products/comparison/coverage_matrix.md").read_text()
     assert "| CMAM | O3 |" in markdown
     assert "| Model | Variable | CCMI range | WACCM-X range | Usable overlap | Extends upward | Status |" in markdown

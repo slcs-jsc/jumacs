@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from .cf import PRESSURE_FIELD
 from .climatology import product_name
 from .config import ROOT, load_config, has_capability, reference_period
 
@@ -55,7 +56,12 @@ def _read(model, canonical, start_year, end_year):
     with xr.open_dataset(path) as ds:
         if field not in ds or ds[field].ndim != 3 or "lat" not in ds[field].dims:
             return None
-        selected = ds[[field]].rename({field: "mean"}).load()
+        keep, rename = [field], {field: "mean"}
+        published = str(ds[field].attrs.get("pressure_field", "")).strip()
+        if published in ds and published not in keep:
+            keep.append(published)
+            rename[published] = PRESSURE_FIELD
+        selected = ds[keep].rename(rename).load()
     selected["mean"].attrs.setdefault("units", "")
     selected.attrs["output_units"] = selected["mean"].attrs["units"]
     return selected

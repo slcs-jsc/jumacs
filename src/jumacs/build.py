@@ -8,7 +8,7 @@ from .climatology import build_climatology
 from .netcdf import open_cftime_dataset
 from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names, vertical_grid
 from .zonal import build_zonal
-from .vertical import pressure_report
+from .vertical import pressure_report, product_pressure, vertical_dimension
 
 
 def buildable_model_names():
@@ -83,14 +83,17 @@ def build_model(model, start_year=None, end_year=None, variables=None):
     report["product"] = str(product_path)
     report["conventions"] = cf.CONVENTIONS
     with xr.open_dataset(product_path) as product:
-        coordinate = vertical_grid()["coordinate"]
-        if coordinate in product.coords:
-            levels = np.asarray(product[coordinate].values, float)
-            report["vertical_grid"] = {"coordinate": coordinate, "level_count": int(levels.size),
-                                       "pressure_min_pa": pressure_report(levels.min()),
-                                       "pressure_max_pa": pressure_report(levels.max()),
-                                       "monotonic": bool(np.all(np.diff(levels) <= 0) or np.all(np.diff(levels) >= 0)),
-                                       "interpolation": "linear_log_pressure", "extrapolation": "none"}
+        grid = vertical_grid()
+        report["application_pressure_grid"] = {"coordinate": grid["coordinate"],
+                                              "level_count": len(grid["levels"]),
+                                              "pressure_min_pa": pressure_report(min(grid["levels"])),
+                                              "pressure_max_pa": pressure_report(max(grid["levels"])),
+                                              "interpolation": grid["interpolation"],
+                                              "extrapolation": grid["extrapolation"],
+                                              "applied_at": "combination; products stay on native grids"}
+        report["vertical"] = {key: str(product.attrs[key]) for key in
+                              ("vertical_coordinate", "vertical_level_count", "vertical_level_counts",
+                               "vertical_interpolation") if key in product.attrs}
         for name in available:
             report["checks"][name] = check_variable(name, product)
     lost = [name for name in available if not report["checks"].get(name, {}).get("present")]
@@ -101,42 +104,46 @@ def build_model(model, start_year=None, end_year=None, variables=None):
     return report
 
 
+def vertical_pressure_monotonic(pressure, axis):
+    """True when every column of the pressure description runs one way only, ignoring missing levels."""
+    diffs = np.diff(np.asarray(pressure, float), axis=axis)
+    steps = diffs[np.isfinite(diffs)]
+    if steps.size == 0:
+        return False
+    return bool(np.all(steps >= 0.0) or np.all(steps <= 0.0))
+
+
 def check_variable(name, combined):
+    """What one field of a product looks like: it is reported on the grid the model published it on."""
     mean = combined.get(f"{name}_mean")
     if mean is None or f"{name}_n_years" not in combined:
         return {"present": False, "ok": False}
-    coordinate = vertical_grid()["coordinate"]
     check = {"present": True, "finite_fraction": round(float(np.isfinite(mean).mean()), 4),
              "n_years_min": int(combined[f"{name}_n_years"].min()),
              "n_years_max": int(combined[f"{name}_n_years"].max()),
              "dimensions": [str(dim) for dim in mean.dims]}
     check["ok"] = True
     if mean.ndim == 3:
-        if coordinate not in mean.dims:
+        pressure = product_pressure(combined, mean)
+        level = vertical_dimension(mean, pressure) if pressure is not None else vertical_dimension(mean)
+        check["vertical_coordinate"] = str(level)
+        check["vertical_level_count"] = int(mean.sizes.get(level, 0)) if level else 0
+        if pressure is None:
             check["ok"] = False
-            check["error"] = f"three-dimensional field is not on the common '{coordinate}' grid: {check['dimensions']}"
+            check["error"] = ("three-dimensional field carries no air pressure: the product needs a pressure-valued "
+                              "coordinate or a published pressure field; rebuild it with jumacs climatology")
             return check
-        pressure = np.asarray(combined[coordinate].values, float)
-        check["pressure_min_pa"] = pressure_report(pressure.min())
-        check["pressure_max_pa"] = pressure_report(pressure.max())
-        check["pressure_monotonic"] = bool(np.all(np.diff(pressure) <= 0) or np.all(np.diff(pressure) >= 0))
-        check["pressure_plausible"] = bool(pressure.max() <= 120000.0 and pressure.min() > 0.0)
-        check["finite_fraction_on_common_grid"] = check["finite_fraction"]
-        top = mean.attrs.get("native_pressure_min_pa")
-        bottom = mean.attrs.get("native_pressure_max_pa")
-        if top and bottom:
-            oriented = mean.transpose(*[coordinate] + [dim for dim in mean.dims if dim != coordinate])
-            finite_per_level = np.isfinite(oriented.values).sum(axis=tuple(range(1, oriented.ndim)))
-            outside = (pressure < top * 0.999) | (pressure > bottom * 1.001)
-            leak = int(np.sum(finite_per_level[outside]))
-            check["levels_outside_native_coverage"] = int(outside.sum())
-            check["values_outside_native_coverage"] = leak
-            if leak:
-                check["ok"] = False
-                check["error"] = f"{leak} finite values outside the native pressure range {top}-{bottom} Pa"
-        if not check["pressure_plausible"] or not check["pressure_monotonic"]:
+        values = np.asarray(pressure, float)
+        check["pressure_representation"] = str(mean.attrs.get("native_pressure_kind",
+                                                              "coordinate" if pressure.ndim == 1 else "profile"))
+        check["pressure_finite_fraction"] = round(float(np.mean(np.isfinite(values) & (values > 0.0))), 4)
+        check["pressure_min_pa"] = pressure_report(np.nanmin(values))
+        check["pressure_max_pa"] = pressure_report(np.nanmax(values))
+        check["pressure_monotonic"] = vertical_pressure_monotonic(values, list(pressure.dims).index(level))
+        check["pressure_plausible"] = bool(check["pressure_max_pa"] <= 120000.0 and check["pressure_min_pa"] > 0.0)
+        if not check["pressure_monotonic"] or not check["pressure_plausible"]:
             check["ok"] = False
-            check["error"] = "the common pressure coordinate is not monotonic, positive and plausible"
+            check["error"] = "the air pressure of the field is not monotonic, positive and plausible"
     else:
         check["vertical_treatment"] = "two-dimensional field kept without a vertical dimension"
     if check["finite_fraction"] == 0.0:

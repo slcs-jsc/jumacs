@@ -8,6 +8,7 @@ import xarray as xr
 from .config import ROOT, load_config
 from .netcdf import open_cftime_dataset
 from .comparison import _pressure
+from .vertical import interpolate_log_pressure, product_pressure, vertical_dimension
 
 
 def coverage_for_field(field, pressure, height=None):
@@ -195,38 +196,58 @@ def approximate_altitude_km(pressure):
     return APPROXIMATE_SCALE_HEIGHT_KM * np.log(APPROXIMATE_SURFACE_PRESSURE_PA / pressure)
 
 
-def product_field_coverage(ds, name, coordinate, sample_fraction):
-    """Availability of one climatology field on the common grid; nothing is interpolated or filled.
+def product_field_coverage(ds, name, levels, sample_fraction):
+    """Availability of one field on the application grid, interpolated in memory from its native levels.
 
-    A pressure level is usable when at least ``sample_fraction`` of its months and latitudes are finite. The
-    per-level fractions travel with the field, so coverage that is broken in the middle stays visible.
+    Coverage asks what a combination could place on the shared grid, so the interpolation that combination will
+    do is done here, on the product as published and without writing anything: linear in log pressure, per month
+    and latitude, never extrapolating, so levels outside the model's own range stay missing. A finite mask is
+    interpolated beside the values, so a grid level counts as available only where the native samples bracketing
+    it are both present - a level inside a gap in the profile is missing here too, as it was when the fractions
+    were measured on native levels. A grid level is usable when at least ``sample_fraction`` of its months and
+    latitudes are available; the per-level fractions travel with the field, so coverage broken in the middle
+    stays visible.
     """
     field = ds[name]
+    pressure = product_pressure(ds, field)
+    levels = np.asarray(levels, float)
     finite = np.isfinite(np.asarray(field, float))
     fraction = round(float(finite.mean()), 6) if finite.size else 0.0
-    if coordinate not in field.dims:
-        return {"variable": name, "is_3d": False, "units": field.attrs.get("units", ""),
-                "finite_fraction": fraction, "levels_any_finite": None,
-                "levels_usable": None, "contiguous_usable": None, "max_any_pressure_pa": None,
-                "min_any_pressure_pa": None, "max_usable_pressure_pa": None, "min_usable_pressure_pa": None,
-                "level_finite_fractions": []}
-    pressure = np.asarray(ds[coordinate], float)
-    axis = list(field.dims).index(coordinate)
-    per_level = finite.mean(axis=tuple(i for i in range(finite.ndim) if i != axis))
+    native = {
+        "variable": name, "is_3d": pressure is not None, "units": field.attrs.get("units", ""),
+        "finite_fraction": fraction, "native_level_count": int(field.sizes.get(vertical_dimension(field), 0)),
+        "native_pressure_min_pa": None, "native_pressure_max_pa": None, "grid_finite_fraction": None,
+        "levels_any_finite": None, "levels_usable": None, "contiguous_usable": None,
+        "max_any_pressure_pa": None, "min_any_pressure_pa": None,
+        "max_usable_pressure_pa": None, "min_usable_pressure_pa": None, "level_finite_fractions": [],
+    }
+    if pressure is None:
+        return native
+    values = field.astype("float64")
+    support = xr.where(np.isfinite(values), 1.0, np.nan).astype("float64")
+    grid = interpolate_log_pressure(values, pressure, levels)
+    reached = interpolate_log_pressure(support, pressure, levels, bridge_gaps=False)
+    available = np.isfinite(np.asarray(grid, float)) & (np.asarray(reached, float) >= 1.0 - 1e-9)
+    off_level = tuple(i for i, dim in enumerate(grid.dims) if dim != "pressure")
+    per_level = available.mean(axis=off_level) if available.ndim else available.astype(float)
     present = per_level > 0.0
     usable = per_level >= sample_fraction
-    reached = np.flatnonzero(usable)
+    hit = np.flatnonzero(usable)
     lowest = np.flatnonzero(present)
-    return {"variable": name, "is_3d": True, "units": field.attrs.get("units", ""),
-            "finite_fraction": fraction,
-            "levels_any_finite": int(present.sum()), "levels_usable": int(usable.sum()),
-            "contiguous_usable": None if reached.size == 0 else
-            bool(reached[-1] - reached[0] + 1 == reached.size),
-            "max_any_pressure_pa": float(pressure[lowest].max()) if lowest.size else None,
-            "min_any_pressure_pa": float(pressure[lowest].min()) if lowest.size else None,
-            "max_usable_pressure_pa": float(pressure[usable].max()) if reached.size else None,
-            "min_usable_pressure_pa": float(pressure[usable].min()) if reached.size else None,
-            "level_finite_fractions": [round(float(value), 6) for value in per_level]}
+    occupied = xr.where(np.isfinite(values), pressure, np.nan)
+    native["native_pressure_min_pa"] = float(np.nanmin(occupied)) if np.isfinite(occupied).any() else None
+    native["native_pressure_max_pa"] = float(np.nanmax(occupied)) if np.isfinite(occupied).any() else None
+    native.update({
+        "grid_finite_fraction": round(float(np.isfinite(np.asarray(grid, float)).mean()), 6),
+        "levels_any_finite": int(present.sum()), "levels_usable": int(usable.sum()),
+        "contiguous_usable": None if hit.size == 0 else bool(hit[-1] - hit[0] + 1 == hit.size),
+        "max_any_pressure_pa": float(levels[lowest].max()) if lowest.size else None,
+        "min_any_pressure_pa": float(levels[lowest].min()) if lowest.size else None,
+        "max_usable_pressure_pa": float(levels[usable].max()) if hit.size else None,
+        "min_usable_pressure_pa": float(levels[usable].min()) if hit.size else None,
+        "level_finite_fractions": [round(float(value), 6) for value in per_level],
+    })
+    return native
 
 
 def read_product(path):
@@ -235,7 +256,12 @@ def read_product(path):
 
 
 def product_inventory(model, start_year, end_year, sample_fraction):
-    """Every mean field of one product, after the product is checked against the configured common grid."""
+    """Every mean field of one product, checked as an individual product and measured on the application grid.
+
+    Products stay on their models' native grids, so coverage is what the field would provide once moved onto the
+    configured application pressure grid; that move happens here in memory, for diagnostics only, and is never
+    written back.
+    """
     from .cf import ProductProblem, assert_product
     from .config import vertical_grid
     grid = vertical_grid()
@@ -247,10 +273,9 @@ def product_inventory(model, start_year, end_year, sample_fraction):
             assert_product(ds, names=tuple(stems), grid=grid)
         except ProductProblem as error:
             raise CoverageMatrixProblem(f"{model}: {path.name} does not meet the product contract: {error}; if the "
-                                        "product predates the single-file CF-1.13 layout or the configured common "
-                                        "pressure grid, rebuild it with jumacs climatology (the monthly zonal "
-                                        "intermediates are reused, not re-derived)") from error
-        fields = {stem: product_field_coverage(ds, stem + PRODUCT_MEAN_SUFFIX, grid["coordinate"], sample_fraction)
+                                        "product predates the single-file CF-1.13 layout, rebuild it with jumacs "
+                                        "climatology (the monthly zonal intermediates are reused, not re-derived)") from error
+        fields = {stem: product_field_coverage(ds, stem + PRODUCT_MEAN_SUFFIX, grid["levels"], sample_fraction)
                   for stem in stems}
     return {"path": str(path), "fields": fields}
 
@@ -313,8 +338,12 @@ def extension_row(model, variable, entry, donor_entry, donor_mapped, group, focu
         status = "extension_candidate" if extends_upward else "overlap_no_extension"
     return {"model": model, "variable": variable, "group": group, "application_focus": variable in focus,
             "product_variable": entry["variable"] if entry else "", "units": entry["units"] if entry else "",
-            "present": entry is not None, "is_3d": bool(entry["is_3d"]) if entry else False,
+            "present": entry is not None,             "is_3d": bool(entry["is_3d"]) if entry else False,
+            "native_level_count": entry["native_level_count"] if entry else None,
+            "native_pressure_min_pa": entry["native_pressure_min_pa"] if entry else None,
+            "native_pressure_max_pa": entry["native_pressure_max_pa"] if entry else None,
             "finite_fraction": entry["finite_fraction"] if entry else None,
+            "grid_finite_fraction": entry["grid_finite_fraction"] if entry else None,
             "levels_any_finite": entry["levels_any_finite"] if entry else None,
             "levels_usable": entry["levels_usable"] if entry else None,
             "broadly_usable": None if entry is None or not entry["is_3d"] else
@@ -380,7 +409,8 @@ def _cell(value):
 
 
 EXTENSION_COLUMNS = ("model", "variable", "group", "application_focus", "product_variable", "units", "present",
-                     "is_3d", "finite_fraction", "levels_any_finite", "levels_usable", "broadly_usable",
+                     "is_3d", "native_level_count", "native_pressure_min_pa", "native_pressure_max_pa",
+                     "finite_fraction", "grid_finite_fraction", "levels_any_finite", "levels_usable", "broadly_usable",
                      "contiguous_usable", "max_any_pressure_pa", "min_any_pressure_pa", "max_valid_pressure_pa",
                      "max_usable_pressure_pa", "min_usable_pressure_pa", "waccmx_available",
                      "waccmx_max_valid_pressure_pa", "waccmx_max_usable_pressure_pa",
@@ -492,6 +522,11 @@ def extension_json(path, models, donor, inventories, rows, sample_fraction, leve
                                      "(valid) extent, which the overlap and extension decision ignores",
             "waccmx_max_valid_pressure_pa": "the same valid lower extent for the WACCM-X field",
             "contiguous_usable": "the usable levels form one unbroken block; null when there are none",
+            "finite_fraction": "finite fraction of the field as published, on the model's own levels",
+            "grid_finite_fraction": "finite fraction after the field is moved onto the application grid",
+            "native_level_count": "levels the model publishes the field on",
+            "native_pressure_min_pa": "lowest pressure the model publishes for the field, in Pa",
+            "native_pressure_max_pa": "highest pressure the model publishes for the field, in Pa",
             "overlap": "levels usable in both the CCMI model and WACCM-X, combined level by level",
             "waccmx_extends_upward": "WACCM-X is usable at lower pressure, that is higher altitude, than the top "
                                      "of the CCMI usable range",
