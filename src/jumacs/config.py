@@ -1,6 +1,8 @@
-from pathlib import Path
 import math
 import re
+from itertools import pairwise
+from pathlib import Path
+
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -115,7 +117,7 @@ def pressure_levels(max_pressure_pa, min_pressure_pa, intervals_per_decade):
 
 
 def vertical_grid():
-    """Project-wide pressure coordinate used by every climatology product.
+    """Project-wide pressure coordinate used by application products.
 
     The configuration states the endpoints and the target resolution; the levels
     themselves are derived here, so there is one definition and no second list to
@@ -141,7 +143,7 @@ def vertical_grid():
                              int(grid["intervals_per_decade"]))
     if any(level <= 0 for level in levels):
         raise ValueError("vertical_grid levels must all be positive pressures in Pa")
-    if not all(a > b for a, b in zip(levels, levels[1:])):
+    if not all(a > b for a, b in pairwise(levels)):
         raise ValueError("vertical_grid levels must be strictly monotonic decreasing")
     return {"coordinate": grid.get("coordinate", "pressure"), "units": "Pa",
             "interpolation": "linear_log_pressure", "extrapolation": "none",
@@ -151,7 +153,7 @@ def vertical_grid():
 
 
 def extension_settings():
-    """Vertical transition width for the planned CCMI + WACCM-X combination.
+    """Vertical transition width for the CCMI + WACCM-X application product.
 
     Widths are counted in common-grid levels, not in kilometres, so the same
     configuration keeps its meaning when the pressure grid changes; 12 levels span

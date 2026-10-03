@@ -1,19 +1,31 @@
 import argparse
 import json
 
-from .archive import inspect_model, variable_matrix, native_variable_report, discovered_zm_variables
+import xarray as xr
+
+from .archive import (
+    discovered_zm_variables,
+    inspect_model,
+    native_variable_report,
+    variable_matrix,
+)
 from .climatology import build_climatology
-from .comparison import compare_period
-from .config import load_config
+from .compact import build_compact
+from .comparison import _pressure, compare_period
+from .config import (
+    is_waccmx,
+    load_config,
+    model_names,
+    model_period,
+    models_with_capability,
+    ready_ccmi_model_names,
+    reference_period,
+)
+from .coverage import coverage_matrix, coverage_model, coverage_plot
 from .diagnostics import quicklooks, trend_plots, validate
 from .download import download, full_plan, plan
-from .zonal import build_zonal
-from .coverage import coverage_model, coverage_matrix, coverage_plot
-from .config import model_names, reference_period, models_with_capability, model_period, is_waccmx, ready_ccmi_model_names
 from .evaluation import evaluate_fields
-from .comparison import _pressure
-from .compact import build_compact
-import xarray as xr
+from .zonal import build_zonal
 
 
 def _model_type(name):
@@ -23,9 +35,9 @@ def _model_type(name):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="jumacs", description="Normal workflow: inspect, download, build, quicklook. Other commands are advanced developer tools.", epilog="jumacs build --model CMAM --start-year 1985 --end-year 2014 builds every variable configured in config/models/CMAM.yaml")
+    parser = argparse.ArgumentParser(prog="jumacs", description="Normal workflow: inspect, download, build, application, quicklook. Other commands are advanced developer tools.", epilog="jumacs build --model CMAM --start-year 1985 --end-year 2014 builds every variable configured in config/models/CMAM.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
-    build = sub.add_parser("build", help="Build one model end to end: monthly zonal series, per-variable climatology, and a verified combined product (variables come from config/models/<MODEL>.yaml)")
+    build = sub.add_parser("build", help="Build one model's monthly zonal series and verified native climatology (variables come from config/models/<MODEL>.yaml)")
     build.add_argument("--model", required=True, help="Model name, comma-separated names, or all (every ready model with zonal processing)")
     build.add_argument("--start-year", type=int)
     build.add_argument("--end-year", type=int)
@@ -133,8 +145,8 @@ def main(argv=None):
         return
     if args.command in ("validate-raw", "coordinate-audit", "post-download-audit"):
         from .config import registry
-        from .raw_validation import validate_model, write_raw_validation
         from .coordinate_audit import audit_model, write_coordinate_audit
+        from .raw_validation import validate_model, write_raw_validation
         models = tuple(registry()) if args.model == "all" else (args.model,)
         stages = {"validate-raw": ("validate-raw",), "coordinate-audit": ("coordinate-audit",),
                   "post-download-audit": ("validate-raw", "coordinate-audit")}[args.command]
@@ -158,7 +170,7 @@ def main(argv=None):
             print(path)
         return
     if args.command == "download-audit":
-        from .audit import write_download_plan_summary, audit_row
+        from .audit import audit_row, write_download_plan_summary
         for model in (*ready_ccmi_model_names(), "WACCM-X"):
             row = audit_row(model)
             print(json.dumps(row, indent=2))
@@ -200,7 +212,7 @@ def main(argv=None):
             print(dest)
         return
     models = model_names() if args.model == "all" else (args.model,)
-    unresolved = [m for m in models if load_config(m)["model"].get("status", "ready") != "ready" and not (args.command == "inspect")]
+    unresolved = [m for m in models if load_config(m)["model"].get("status", "ready") != "ready" and args.command != "inspect"]
     for model in unresolved:
         print(f"{model}: skipped; archive identifiers unresolved in config/models/{model}.yaml")
     models = tuple(m for m in models if m not in unresolved)

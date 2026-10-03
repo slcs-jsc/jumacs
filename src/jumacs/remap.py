@@ -23,7 +23,7 @@ from . import cf, config, vertical
 
 BAND_WIDTH_DEGREES = 5.0
 
-REMAP_STATISTICS = ("mean", "sigma", "minimum", "maximum")
+REMAP_STATISTICS = cf.APPLICATION_STATISTIC_ORDER
 
 BAND_LATITUDE_ATTRS = {"standard_name": "latitude", "units": "degrees_north", "axis": "Y",
                        "long_name": "latitude band center"}
@@ -64,7 +64,7 @@ def latitude_bands(width_degrees=BAND_WIDTH_DEGREES):
     if width <= 0 or abs(180.0 / width - round(180.0 / width)) > 1e-9:
         raise ValueError(f"the latitude band width must divide the 180 degrees from pole to pole exactly, found "
                          f"{width_degrees}")
-    count = int(round(180.0 / width))
+    count = round(180.0 / width)
     edges = -90.0 + width * np.arange(count + 1, dtype="float64")
     edges[0], edges[-1] = -90.0, 90.0
     return edges, (edges[:-1] + edges[1:]) / 2.0

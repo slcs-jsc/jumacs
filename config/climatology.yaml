@@ -6,9 +6,9 @@ reference_period:
   bias_correction: none
   trend_correction: none
 
-# One project-wide pressure coordinate for every climatology product. Monthly
-# zonal fields are regridded onto these levels before the statistics are
-# computed, so all species and models share one vertical axis.
+# One project-wide pressure coordinate for application products. Individual
+# climatologies compute statistics on native model levels; the application
+# builder remaps those statistics onto this shared axis afterward.
 #
 # Only the endpoints and the target resolution are configured; config.vertical_grid()
 # derives the levels, so there is one definition and no long list to keep in step.
@@ -25,13 +25,13 @@ reference_period:
 # transport/chemistry applications need while 124 levels remain modest in compute
 # and storage for monthly zonal climatologies. It is a common application grid, not
 # a claim that every atmospheric layer is fully resolved; native structure stays in
-# the model-native zonal intermediates.
+# the individual climatologies and monthly zonal intermediates.
 #
 # The top level is 0.002 Pa, roughly 120 km in a standard atmosphere. Pressure is
 # authoritative: the equivalent altitude varies with temperature, latitude and
 # season, so no altitude is configured and none is written into the products.
 # Change max_pressure_pa, min_pressure_pa or intervals_per_decade and rebuild the
-# climatologies; a product written on another axis is refused, never resampled.
+# application products. Individual climatologies keep their native axes.
 vertical_grid:
   coordinate: pressure
   units: Pa
@@ -42,11 +42,10 @@ vertical_grid:
   intervals_per_decade: 16
   description: log-uniform grid, about sixteen levels per decade (factor 10**0.0626), 1e5 Pa (surface) to 0.002 Pa (about 120 km)
 
-# Vertical transition width for the planned CCMI + WACCM-X combination. Widths are
+# Vertical transition width for the CCMI + WACCM-X application product. Widths are
 # counted in common-grid levels rather than kilometres, so they keep their meaning
 # when the pressure grid changes: 12 levels span 11 intervals, about 11 km on the
-# ~1 km grid. No combination is performed yet; this reserves the settings that step
-# will read, and per-variable overrides stay empty until a variable needs one.
+# ~1 km grid. Per-variable overrides stay empty until a variable needs one.
 extension:
   transition_levels: 12
   transition_levels_by_variable: {}

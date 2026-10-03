@@ -45,8 +45,6 @@ EXTENSION_WEIGHTING = "linear in log pressure: 0 at the lowest transition level,
 EXTENSION_ELIGIBILITY = ("a donor value where the base is missing is taken only above the transition of a column "
                          "whose donor reaches above the base top; a missing value inside the base profile stays "
                          "missing and is not repaired by the donor")
-EXTENSION_REASONS = ("extended", "no_overlap", "donor_not_higher")
-
 COORDINATE_TOLERANCE = 1e-12
 
 
