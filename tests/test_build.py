@@ -62,14 +62,14 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert report["variables_in_product"] == 3
     levels = combined["lev"].values
     assert np.array_equal(levels, np.array([100000., 10000., 1000.]))
-    assert combined.attrs["vertical_level_count"] == 3 and combined.attrs["vertical_level_counts"] == "lev=3"
-    for name, value in (("ta", 220.0), ("o3", 8e-6), ("h2o", 5e-6)):
+    assert combined.attrs["vertical_level_count"] == 3 and combined.attrs["vertical_level_counts"] == "lev=3; lev_2=3"
+    for name, value, level in (("ta", 220.0, "lev_2"), ("o3", 8e-6, "lev_2"), ("h2o", 5e-6, "lev")):
         mean = combined[f"{name}_mean"].isel(time=0)
         assert np.allclose(mean.values, value)
         assert combined[f"{name}_n_years"].isel(time=0).max().item() == 30
         check = report["checks"][name]
-        assert check["dimensions"] == ["time", "lev", "lat"]
-        assert check["vertical_coordinate"] == "lev" and check["vertical_level_count"] == 3
+        assert check["dimensions"] == ["time", level, "lat"]
+        assert check["vertical_coordinate"] == level and check["vertical_level_count"] == 3
         assert check["n_years_max"] == 30 and check["n_years_min"] == 30
         assert check["finite_fraction"] == 1.0
         assert check["pressure_min_pa"] == 1000.0 and check["pressure_max_pa"] == 100000.0
@@ -86,12 +86,23 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert f"{grid['pressure_min_pa']:g}" == "0.002"
     assert combined.attrs["variable_count"] == 3
     assert combined.attrs["vertical_coordinate"].startswith("'lev'")
-    assert combined.attrs["vertical_coordinate"].endswith("standard_name air_pressure)")
+    assert "native pressure levels in Pa (standard_name air_pressure)" in combined.attrs["vertical_coordinate"]
+    assert ("'lev_2' native level index of the model, named 'lev' in the source; its pressure is "
+            "'air_pressure_lev_2' (time, lev_2, lat) in Pa" in combined.attrs["vertical_coordinate"])
+    assert "the source name 'lev' is published as 'lev' and 'lev_2' here" in combined.attrs["vertical_coordinate"]
+    assert combined["air_pressure_lev_2"].dims == ("time", "lev_2", "lat")
+    assert combined["ta_mean"].attrs["pressure_field"] == "air_pressure_lev_2"
+    assert combined["o3_mean"].attrs["pressure_field"] == "air_pressure_lev_2"
+    assert combined["h2o_mean"].attrs["pressure_coordinate"] == "lev"
+    assert "pressure_field" not in combined["h2o_mean"].attrs
     assert combined.attrs["application_pressure_grid"].startswith("124 levels from 100000 to 0.002 Pa")
     assert combined.attrs["vertical_interpolation"].startswith("none")
     assert combined.attrs["vertical_extrapolation"].startswith("none")
     assert combined["lev"].attrs["units"] == "Pa"
     assert combined["lev"].attrs["standard_name"] == "air_pressure"
+    assert combined["lev_2"].attrs["units"] == "1" and "standard_name" not in combined["lev_2"].attrs
+    assert combined["lev_2"].attrs["source_level_coordinate"] == "lev"
+    assert "not from these levels" in combined["lev"].attrs["comment"]
     assert not [dim for dim in combined.dims if dim.endswith(("_lev", "_plev"))]
     assert combined["o3_mean"].attrs["source_variable"] == "o3"
     assert combined["o3_mean"].attrs["cell_methods"] == "longitude: mean time: mean within years time: mean over years"
@@ -105,7 +116,9 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert combined["climatology_bounds"].dims == ("time", "nv")
     assert "source_units" not in combined["o3_n_years"].attrs
     assert set(combined["o3_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable",
-                                                "pressure_coordinate"}
+                                                "pressure_field"}
+    assert set(combined["h2o_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable",
+                                                 "pressure_coordinate"}
     combined.close()
 
 

@@ -321,8 +321,9 @@ def test_the_level_name_of_a_source_holds_one_product_dimension_per_grid():
     redundant = xr.DataArray(np.broadcast_to(np.array([1e5, 1e4])[None, :, None], (3, 2, 1)).copy(),
                              dims=("time", "plev", "lat"))
     assert level_grid_name(grids, "plev", coarse) == "plev"
-    assert level_grid_name(grids, "plev", redundant) == "plev"
+    assert level_grid_name(grids, "plev", redundant) == "plev_2"
     assert [name for name, _ in grids["lev"]] == ["lev", "lev_2", "lev_3"]
+    assert [name for name, _ in grids["plev"]] == ["plev", "plev_2"]
 
 
 def test_two_native_grids_that_share_the_source_level_name_are_published_apart(tmp_path, monkeypatch):
@@ -356,6 +357,134 @@ def test_two_native_grids_that_share_the_source_level_name_are_published_apart(t
         assert ds.attrs["vertical_level_counts"] == "lev=4; lev_2=3"
         assert ds.attrs["vertical_coordinate"].count("named 'lev' in the source") == 1
         assert not [dim for dim in ds.dims if dim not in ("time", "lev", "lev_2", "lat", cf.BOUNDS_DIMENSION)]
+
+
+def test_two_fixed_grids_of_the_same_source_name_keep_their_own_pressures(tmp_path, monkeypatch):
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    store(tmp_path, "GEOSCCM", "br",
+          with_pressure(zonal_dataset("br", np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4, 1e3]))
+    store(tmp_path, "GEOSCCM", "o3",
+          with_pressure(zonal_dataset("o3", np.broadcast_to(np.array([3., 4.])[None, :, None], (24, 2, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4]))
+    with xr.open_dataset(build_climatology("GEOSCCM", 2000, 2001, ["br", "o3"]), decode_cf=False) as ds:
+        cf.assert_product(ds, names=("br", "o3"), grid=GRID)
+        assert ds.sizes["lev"] == 3 and ds.sizes["lev_2"] == 2
+        assert np.allclose(ds.lev.values, [1e5, 1e4, 1e3]) and np.allclose(ds.lev_2.values, [1e5, 1e4])
+        for level in ("lev", "lev_2"):
+            assert ds[level].attrs["standard_name"] == "air_pressure" and ds[level].attrs["units"] == "Pa"
+            assert ds[level].attrs["positive"] == "down" and ds[level].attrs["axis"] == "Z"
+        assert ds.br_mean.attrs["native_level_dimension"] == "lev"
+        assert ds.br_mean.attrs["native_source_level_dimension"] == "lev"
+        assert ds.o3_mean.attrs["native_level_dimension"] == "lev_2"
+        assert ds.o3_mean.attrs["native_source_level_dimension"] == "lev"
+        assert ds.br_mean.attrs["pressure_coordinate"] == "lev"
+        assert ds.o3_mean.attrs["pressure_coordinate"] == "lev_2"
+        assert np.allclose(ds.br_mean.values, np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (12, 3, 2)))
+        assert np.allclose(ds.o3_mean.values, np.broadcast_to(np.array([3., 4.])[None, :, None], (12, 2, 2)))
+        for name, levels in (("br", [1e5, 1e4, 1e3]), ("o3", [1e5, 1e4])):
+            pressure = product_pressure(ds, ds[f"{name}_mean"])
+            assert np.allclose(pressure.values, levels) and pressure.attrs["units"] == "Pa"
+        assert not [name for name in ds.data_vars if name.startswith("air_pressure")]
+        assert ds.attrs["vertical_level_counts"] == "lev=3; lev_2=2"
+        assert not [dim for dim in ds.dims if dim not in ("time", "lev", "lev_2", "lat", cf.BOUNDS_DIMENSION)]
+
+
+def test_equally_long_grids_of_the_source_level_name_are_only_one_grid_when_the_pressures_agree(tmp_path, monkeypatch):
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    store(tmp_path, "GEOSCCM", "br",
+          with_pressure(zonal_dataset("br", np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4, 1e3]))
+    store(tmp_path, "GEOSCCM", "o3",
+          with_pressure(zonal_dataset("o3", np.broadcast_to(np.array([3., 4., 5.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), [9e4, 9e3, 9e2]))
+    shared = build_climatology("GEOSCCM", 2000, 2001, ["br", "o3"])
+    with xr.open_dataset(shared, decode_cf=False) as ds:
+        cf.assert_product(ds, names=("br", "o3"), grid=GRID)
+        assert dict(ds.sizes) == {"time": 12, "lev": 3, "lev_2": 3, "lat": 2, cf.BOUNDS_DIMENSION: 2}
+        assert np.allclose(ds.lev.values, [1e5, 1e4, 1e3]) and np.allclose(ds.lev_2.values, [9e4, 9e3, 9e2])
+        assert list(ds.o3_mean.dims) == ["time", "lev_2", "lat"]
+        assert np.allclose(ds.br_mean.values, np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (12, 3, 2)))
+        assert np.allclose(ds.o3_mean.values, np.broadcast_to(np.array([3., 4., 5.])[None, :, None], (12, 3, 2)))
+
+    store(tmp_path, "GEOSCCM", "o3",
+          with_pressure(zonal_dataset("o3", np.broadcast_to(np.array([3., 4., 5.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4 * (1 + 1e-9), 1e3]))
+    with xr.open_dataset(build_climatology("GEOSCCM", 2000, 2001, ["br", "o3"]), decode_cf=False) as ds:
+        cf.assert_product(ds, names=("br", "o3"), grid=GRID)
+        assert dict(ds.sizes) == {"time": 12, "lev": 3, "lat": 2, cf.BOUNDS_DIMENSION: 2}
+        assert list(ds.o3_mean.dims) == ["time", "lev", "lat"]
+        assert ds.o3_mean.attrs["native_level_dimension"] == "lev"
+
+
+def test_a_coordinate_and_a_profile_of_the_same_levels_are_published_on_dimensions_of_their_own(tmp_path, monkeypatch):
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    levels = [1e5, 1e4, 1e3]
+    store(tmp_path, "GEOSCCM", "br",
+          with_pressure(zonal_dataset("br", np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), levels))
+    dynamics = zonal_dataset("o3", np.broadcast_to(np.array([10., 20., 30.])[None, :, None], (24, 3, 2)),
+                             lats=(-45., 45.), periods=24)
+    dynamics = dynamics.assign_coords(lev=("lev", np.arange(3.), {"units": "1"}))
+    store(tmp_path, "GEOSCCM", "o3", with_hybrid_pressure(dynamics, profile(levels, 24) * np.ones((1, 1, 2))))
+    with xr.open_dataset(build_climatology("GEOSCCM", 2000, 2001, ["br", "o3"]), decode_cf=False) as ds:
+        cf.assert_product(ds, names=("br", "o3"), grid=GRID)
+        assert dict(ds.sizes) == {"time": 12, "lev": 3, "lev_2": 3, "lat": 2, cf.BOUNDS_DIMENSION: 2}
+        assert list(ds.o3_mean.dims) == ["time", "lev_2", "lat"]
+        assert np.allclose(ds.lev.values, levels)
+        assert ds.lev.attrs["standard_name"] == "air_pressure" and ds.lev.attrs["units"] == "Pa"
+        assert "not from these levels" in ds.lev.attrs["comment"]
+        assert np.isfinite(ds.br_mean.values).all() and np.isfinite(ds.o3_mean.values).all()
+        assert np.allclose(ds.br_mean.values, np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (12, 3, 2)))
+        assert np.allclose(ds.o3_mean.values, np.broadcast_to(np.array([10., 20., 30.])[None, :, None], (12, 3, 2)))
+        assert ds.br_mean.attrs["pressure_coordinate"] == "lev" and "pressure_field" not in ds.br_mean.attrs
+        assert ds.o3_mean.attrs["pressure_field"] == "air_pressure_lev_2"
+        assert "pressure_coordinate" not in ds.o3_mean.attrs
+        assert np.allclose(ds.air_pressure_lev_2.values,
+                           np.broadcast_to(np.array(levels)[None, :, None], (12, 3, 2)))
+        assert np.array_equal(product_pressure(ds, ds.o3_mean).values, ds.air_pressure_lev_2.values)
+        assert ds.lev_2.attrs["units"] == "1" and "standard_name" not in ds.lev_2.attrs
+        assert ds.attrs["vertical_level_counts"] == "lev=3; lev_2=3"
+        assert ds.attrs["vertical_coordinate"].startswith("'lev' native pressure levels in Pa")
+        assert "the source name 'lev' is published as 'lev' and 'lev_2' here" in ds.attrs["vertical_coordinate"]
+
+
+def test_the_published_grid_names_do_not_depend_on_the_order_of_the_variables(tmp_path, monkeypatch):
+    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
+    store(tmp_path, "GEOSCCM", "br",
+          with_pressure(zonal_dataset("br", np.broadcast_to(np.array([0., 1., 2.])[None, :, None], (24, 3, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4, 1e3]))
+    store(tmp_path, "GEOSCCM", "o3",
+          with_pressure(zonal_dataset("o3", np.broadcast_to(np.array([3., 4.])[None, :, None], (24, 2, 2)),
+                                      lats=(-45., 45.), periods=24), [1e5, 1e4]))
+
+    def plain(attrs):
+        result = {}
+        for key, value in attrs.items():
+            try:
+                if np.isnan(value):
+                    value = "nan"
+            except TypeError:
+                pass
+            result[key] = value
+        return result
+
+    def description(names):
+        with xr.open_dataset(build_climatology("GEOSCCM", 2000, 2001, names), decode_cf=False) as ds:
+            return (sorted(ds.dims), {dimension: ds.sizes[dimension] for dimension in ds.dims},
+                    {grid: (ds[grid].values.tolist(), plain(ds[grid].attrs)) for grid in ("lev", "lev_2")},
+                    {field: plain(ds[f"{field}_mean"].attrs) for field in ("br", "o3")},
+                    plain({key: value for key, value in ds.attrs.items() if "level" in key or "vertical" in key}))
+
+    assert description(["br", "o3"]) == description(["o3", "br"])
+
+
+def test_a_variable_whose_level_count_is_not_the_count_of_its_grid_is_refused_by_name():
+    pressures = {"lev": {"kind": "coordinate", "pressure": xr.DataArray(np.logspace(5, 2, 3), dims=("lev",)),
+                         "source_variable": "o3", "coverage": (2000, 2001), "units": "Pa"}}
+    parts = [native_part("ta", "lev", np.arange(4.), "K", {"units": "1"})]
+    with pytest.raises(RuntimeError, match="variable 'ta'"):
+        assemble_product("CMAM", 2000, 2001, parts, (), ["ta"], pressures)
 
 
 def test_a_product_built_on_the_application_pressure_grid_is_not_written(tmp_path, monkeypatch):
