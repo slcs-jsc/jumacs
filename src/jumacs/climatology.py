@@ -320,6 +320,41 @@ def _check_latitude(model, variable, anchor_variable, anchor, latitude):
             f"latitude points, maximum absolute coordinate difference {difference} degrees")
 
 
+def _latitude_axis(part):
+    """The 1-D latitude coordinate of one part, or None when the part carries no latitude dimension."""
+    if "lat" not in part.coords or "lat" not in part.dims:
+        return None
+    return np.asarray(part["lat"].values, "float64")
+
+
+def latitude_anchor(parts):
+    """The canonical latitude grid of assembled parts, and the variable that provided it."""
+    for part in parts:
+        latitude = _latitude_axis(part)
+        if latitude is not None:
+            return latitude, _part_variable(part)
+    return None, ""
+
+
+def pin_field_latitude(part, model, label, anchor, anchor_variable):
+    """Pin the latitude coordinate of one part onto the canonical grid of the product.
+
+    A grid that agrees with the anchor to LATITUDE_SNAP_TOLERANCE_DEGREES is snapped to it; the values of
+    the data are never interpolated, reordered, or rounded. A grid that differs by more than that, or that
+    disagrees in size or order, is a real mismatch and raises instead of being unioned.
+    """
+    latitude = _latitude_axis(part)
+    if latitude is None or anchor is None or np.array_equal(latitude, anchor):
+        return part
+    _check_latitude(model, label, anchor_variable, anchor, latitude)
+    return part.assign_coords(lat=(("lat",), anchor, dict(part["lat"].attrs)))
+
+
+def pin_latitude(parts, model="", anchor=None, anchor_variable=""):
+    """Pin the latitude coordinate of every part onto one canonical grid, one check per part."""
+    return [pin_field_latitude(part, model, _part_variable(part), anchor, anchor_variable) for part in parts]
+
+
 def normalize_latitude(parts, model=""):
     """Pin latitude grids that differ only by roundoff onto the canonical grid of the product.
 
@@ -327,26 +362,10 @@ def normalize_latitude(parts, model=""):
     float64 roundoff of order 1e-6 degrees. An outer merge reads those as two different
     axes and publishes their union, which leaves most latitude rows NaN and makes the
     field look unusable. Grids that agree to LATITUDE_SNAP_TOLERANCE_DEGREES are therefore
-    snapped to the coordinate of the first assembled part; the values of the data are
-    never interpolated, reordered, or rounded. Grids that differ by more than that, or
-    that disagree in size or order, are a real mismatch and raise instead.
+    snapped to the coordinate of the first assembled part, grids that genuinely differ raise.
     """
-    anchor = None
-    anchor_variable = ""
-    normalized = []
-    for part in parts:
-        if "lat" not in part.coords or "lat" not in part.dims:
-            normalized.append(part)
-            continue
-        latitude = np.asarray(part["lat"].values, "float64")
-        variable = _part_variable(part)
-        if anchor is None:
-            anchor, anchor_variable = latitude, variable
-            normalized.append(part)
-            continue
-        _check_latitude(model, variable, anchor_variable, anchor, latitude)
-        normalized.append(part.assign_coords(lat=(("lat",), anchor, dict(part["lat"].attrs))))
-    return normalized
+    anchor, anchor_variable = latitude_anchor(parts)
+    return pin_latitude(parts, model, anchor, anchor_variable)
 
 
 def _grid_order(name):
@@ -521,12 +540,14 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
     pressures = pressures or {}
     names = sorted(names or {part[key].attrs["source_variable"] for part in parts for key in part.data_vars})
     months = [part.rename({"month": "time"}) for part in normalize_latitude(parts, model)]
+    anchor, anchor_variable = latitude_anchor(months)
     published = {level: pressure_field_name(pressures, level) for level, entry in sorted(pressures.items())
                  if hybrid_pressure_field(entry) is not None}
     months = pin_level_coordinates(months, pressures, published, model)
     published_parts = []
     for level, name in sorted(published.items()):
         field = hybrid_pressure_field(pressures[level]).rename({"month": "time"}).rename(name)
+        field = pin_field_latitude(field, model, name, anchor, anchor_variable)
         values, attrs = level_coordinate_description(pressures[level], level, name,
                                                      _shared_source_note(pressures, level))
         field = field.assign_coords(**{level: ((level,), values, attrs)})
@@ -535,6 +556,11 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
                                              pressures[level].get("source_level", level))
         published_parts.append(field)
     combined = xr.merge(months + published_parts, join="outer", compat="override")
+    if anchor is not None and combined.sizes.get("lat", 0) != anchor.size:
+        raise RuntimeError(
+            f"Climatology product of {model} merged onto {combined.sizes.get('lat', 0)} latitude points, the "
+            f"canonical grid taken from '{anchor_variable}' has {anchor.size}; the latitude axis of a product is "
+            f"never expanded by a merge, so one of its fields carries another latitude grid")
     vertical_dims = sorted({vertical_dimension(variable) for variable in combined.data_vars.values()
                             if variable.ndim == 3} - {None})
     stray = sorted(dim for dim in combined.dims
