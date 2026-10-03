@@ -3,7 +3,7 @@
 import json
 import re
 import shutil
-import warnings
+from itertools import pairwise
 from pathlib import Path
 
 import matplotlib
@@ -13,12 +13,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-from . import config
+from . import config, remap, vertical
 
 ZONAL_MONTHS = (1, 4, 7, 10)
 MONTH_NAMES = {1: "January", 4: "April", 7: "July", 10: "October"}
-REFERENCE_LATITUDES = (-60.0, 0.0, 60.0)
-REFERENCE_PRESSURES_HPA = (100.0, 10.0, 1.0)
+PLOT_PRESSURES_HPA = (1000.0, 100.0, 10.0, 1.0)
+PLOT_LATITUDE_EDGES = (-90.0, -65.0, -20.0, 20.0, 65.0, 90.0)
+PLOT_LATITUDE_NAMES = ("Polar South (90–65°S)", "Midlatitudes South (65–20°S)",
+                       "Tropics (20°S–20°N)", "Midlatitudes North (20–65°N)",
+                       "Polar North (65–90°N)")
+PLOT_LATITUDE_CENTERS = tuple((south + north) / 2 for south, north in pairwise(PLOT_LATITUDE_EDGES))
 
 
 def discover_application_products(root, start_year, end_year, model=None):
@@ -50,59 +54,69 @@ def _timeline_path(model, native_name):
     return Path("plots") / model / f"{safe_name}_timeline.png"
 
 
+def _band_samples(field, pressure, latitudes):
+    """Sample exact pressures per column, then average over five spherical-area bands."""
+    sampled = vertical.interpolate_log_pressure(
+        field, pressure, np.asarray(PLOT_PRESSURES_HPA) * 100.0, bridge_gaps=False)
+    weights = remap.latitude_band_weights(latitudes, PLOT_LATITUDE_EDGES)
+    bands = remap.area_weighted_bands(sampled, weights, PLOT_LATITUDE_CENTERS)
+    return bands.transpose("lat", "pressure", "time").values
+
+
+def _pressure_to_height(pressure_hpa):
+    """Indicative height for a fixed 7 km scale height and 1000 hPa reference."""
+    return -7.0 * np.log(np.asarray(pressure_hpa) / 1000.0)
+
+
+def _height_to_pressure(height_km):
+    return 1000.0 * np.exp(-np.asarray(height_km) / 7.0)
+
+
+def _plot_band_series(samples, x, model, label, units, title, xlabel, destination):
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True, constrained_layout=True)
+    colors = ("#2b8cbe", "#f28e2b", "#4a9d65", "#9467bd", "#c64b5d")
+    for level, (pressure, ax) in enumerate(zip(PLOT_PRESSURES_HPA, axes.flat)):
+        for band, (name, color) in enumerate(zip(PLOT_LATITUDE_NAMES, colors)):
+            ax.plot(x, samples[band, level], color=color, lw=1.3, label=name)
+        ax.set(title=f"{pressure:g} hPa", ylabel=units or "Value")
+        ax.grid(alpha=0.2)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.06), ncol=3)
+    for ax in axes[1, :]:
+        ax.set_xlabel(xlabel)
+    if xlabel == "Month":
+        for ax in axes.flat:
+            ax.set_xticks(np.arange(1, 13))
+            ax.set_xlim(1, 12)
+    fig.suptitle(f"{model} · {label} · {title}")
+    fig.savefig(destination, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _plot_timeline(source, native, model, label, destination):
     """Plot the actual monthly zonal series, using its published native pressure."""
     with xr.open_dataset(source) as ds:
         field = ds[native]
-        level = next((dim for dim in ("lev", "plev") if dim in field.dims), None)
-        if level is None or "time" not in field.dims or "lat" not in field.dims:
+        pressure = vertical.native_pressure(ds, field)
+        if pressure is None or "time" not in field.dims or "lat" not in field.dims:
             return False
-        order = ("time", level, "lat")
-        values = field.transpose(*order).values
-        if "air_pressure" in ds:
-            pressure = ds.air_pressure.transpose(*order).values / 100.0
-        else:
-            coordinate = ds[level]
-            factor = {"Pa": 0.01, "hPa": 1.0, "mbar": 1.0}.get(coordinate.attrs.get("units"))
-            if factor is None:
-                return False
-            pressure = np.broadcast_to(coordinate.values[None, :, None] * factor, values.shape)
-        latitudes = ds.lat.values
+        samples = _band_samples(field, pressure, ds.lat.values)
         years = ds.time.dt.year.values
         months = ds.time.dt.month.values
         units = field.attrs.get("units", "")
     if units in ("mol mol-1", "mol/mol"):
-        finite = np.abs(values[np.isfinite(values)])
+        finite = np.abs(samples[np.isfinite(samples)])
         peak = float(np.percentile(finite, 98)) if finite.size else 0.0
         power, units = ((6, "ppmv") if peak >= 1e-6 else (9, "ppbv") if peak >= 1e-9
                         else (12, "pptv") if peak >= 1e-12 else (15, "ppqv"))
-        values = values * 10 ** power
+        samples = samples * 10 ** power
     elif units == "Pa":
-        values, units = values / 100.0, "hPa"
+        samples, units = samples / 100.0, "hPa"
     elif units == "m":
-        values, units = values / 1000.0, "km"
-    fig, ax = plt.subplots(figsize=(10.5, 4.4))
+        samples, units = samples / 1000.0, "km"
     x = years + (months - 0.5) / 12
-    with np.errstate(divide="ignore", invalid="ignore"):
-        for target, color in ((300.0, "#078c9d"), (30.0, "#df7344")):
-            distance = np.where((pressure > 0) & np.isfinite(pressure),
-                                np.abs(np.log(pressure / target)), np.inf)
-            index = np.argmin(distance, axis=1)
-            layer = np.take_along_axis(values, index[:, None, :], axis=1)[:, 0, :]
-            for south, north, style, band in ((-20, 20, "-", "tropics"),
-                                               (45, 75, "--", "45–75°N")):
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", RuntimeWarning)
-                    series = np.nanmean(layer[:, (latitudes >= south) & (latitudes <= north)], axis=1)
-                ax.plot(x, series, color=color, ls=style, lw=1.3,
-                        label=f"{target:g} hPa · {band}")
-    ax.set(xlim=(years.min(), years.max() + 1), xlabel="Year", ylabel=units or "Value",
-           title=f"{model} · {label} · monthly zonal means {years.min()}–{years.max()}")
-    ax.grid(alpha=0.2)
-    ax.legend(fontsize=8, ncol=2)
-    fig.tight_layout()
-    fig.savefig(destination, dpi=125)
-    plt.close(fig)
+    _plot_band_series(samples, x, model, label, units,
+                      f"monthly zonal means {years.min()}–{years.max()}", "Year", destination)
     return True
 
 
@@ -123,28 +137,25 @@ def _plot_zonal(values, pressure_hpa, latitudes, model, label, units, path):
         ax.set_xlabel("Latitude (°N)")
     for ax in axes[:, 0]:
         ax.set_ylabel("Pressure (hPa)")
+    for ax in axes[:, 1]:
+        height = ax.twinx()
+        height.set_yscale("log")
+        height.set_ylim(ax.get_ylim())
+        ticks_km = np.arange(0, _pressure_to_height(pressure_hpa.min()), 20)
+        height.set_yticks(_height_to_pressure(ticks_km))
+        height.set_yticklabels([f"{value:g}" for value in ticks_km])
+        height.minorticks_off()
+        height.set_ylabel("Approx. height (km)")
     fig.suptitle(f"{model} · {label} · zonal climatology")
     fig.colorbar(image, ax=axes, label=units or "Value", shrink=0.85)
     fig.savefig(path, dpi=120)
     plt.close(fig)
 
 
-def _plot_annual(values, pressure_hpa, latitudes, model, label, units, path):
-    fig, axes = plt.subplots(3, 1, figsize=(9, 8), sharex=True, constrained_layout=True)
-    months = np.arange(1, 13)
-    for ax, latitude in zip(axes, REFERENCE_LATITUDES):
-        lat_index = int(np.abs(latitudes - latitude).argmin())
-        for pressure in REFERENCE_PRESSURES_HPA:
-            pressure_index = int(np.abs(np.log(pressure_hpa / pressure)).argmin())
-            ax.plot(months, values[:, pressure_index, lat_index], marker="o", markersize=3,
-                    label=f"{pressure_hpa[pressure_index]:g} hPa")
-        ax.set_ylabel(f"{latitudes[lat_index]:g}°N\n{units or 'Value'}")
-        ax.grid(alpha=0.25)
-    axes[0].legend(ncol=3, fontsize="small")
-    axes[-1].set(xlabel="Month", xticks=months, xlim=(1, 12))
-    fig.suptitle(f"{model} · {label} · Annual cycle")
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
+def _plot_annual(field, model, label, units, path):
+    samples = _band_samples(field, field.pressure, field.lat.values)
+    _plot_band_series(samples, np.arange(1, 13), model, label, units,
+                      "Annual cycle", "Month", path)
 
 
 def _html(records, start_year, end_year):
@@ -178,10 +189,12 @@ HTML_TEMPLATE = """<!doctype html>
 <span><a class="download" id="png" download>Download PNG</a>
 <a class="download" id="product" download>Download NetCDF</a></span></figcaption></figure>
 <p class="note">Cross sections: January, April, July and October on the application pressure grid.
-Annual cycle: twelve climatological months near 60°S, the equator and 60°N at 100, 10 and 1 hPa.
-Monthly time series: original monthly zonal data at 300 and 30 hPa for 20°S–20°N and 45–75°N;
-these may span a longer source period than the application climatology and appear only where the source series exists.
-No missing values are filled.</p>
+The right axes on April and October show an approximate height using a fixed 7 km scale height.
+Annual cycle: twelve climatological months at exactly 1000, 100, 10 and 1 hPa.
+Monthly time series: original monthly zonal data at the same four pressures;
+both line plots compare tropical, northern/southern midlatitude and northern/southern polar area means.
+The monthly series may span a longer source period than the application climatology and appear only where the source series exists.
+Some 1000 hPa curves are absent where source data do not reach that pressure. No missing values are filled.</p>
 </section></main><script id="catalog" type="application/json">__CATALOG__</script>
 <script>
 const catalog = JSON.parse(document.getElementById('catalog').textContent);
@@ -319,7 +332,7 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None):
                     label = mapping.get(native, native).replace("_", " ")
                     units = str(field.attrs.get("units", ""))
                     _plot_zonal(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[0])
-                    _plot_annual(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[1])
+                    _plot_annual(field, model_name, label, units, staging / paths[1])
                     views = {"zonal": paths[0], "annual": paths[1]}
                     source = root / model_config["paths"]["zonal"] / f"{native}_monthly_zonal.nc"
                     if source.is_file():

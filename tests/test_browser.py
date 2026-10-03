@@ -8,8 +8,14 @@ import numpy as np
 import xarray as xr
 
 from jumacs.browser import (
+    PLOT_LATITUDE_EDGES,
+    PLOT_PRESSURES_HPA,
     ZONAL_MONTHS,
+    _band_samples,
+    _height_to_pressure,
     _plot_paths,
+    _plot_zonal,
+    _pressure_to_height,
     build_site,
     discover_application_products,
 )
@@ -100,6 +106,44 @@ def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
     assert (result["site"] / "plots/SOCOL/ta_timeline.png").stat().st_size > 1000
     html = (result["site"] / "index.html").read_text()
     assert "plots/SOCOL/ta_timeline.png" in html
+
+
+def test_exact_pressures_and_five_area_weighted_bands_keep_missing_barriers():
+    assert PLOT_PRESSURES_HPA == (1000.0, 100.0, 10.0, 1.0)
+    assert PLOT_LATITUDE_EDGES == (-90.0, -65.0, -20.0, 20.0, 65.0, 90.0)
+    pressure = np.array([100000.0, 20000.0, 5000.0, 2000.0, 500.0, 100.0])
+    latitude = np.array([-75.0, -50.0, -25.0, -15.0, 15.0, 25.0, 50.0, 75.0])
+    values = np.log(pressure[:, None]) + latitude[None, :] / 100.0
+    values[3] = np.nan
+    field = xr.DataArray(values[None], dims=("time", "plev", "lat"),
+                         coords={"time": [0], "plev": pressure, "lat": latitude})
+    samples = _band_samples(field, field.plev, latitude)
+    assert samples.shape == (5, 4, 1)
+    np.testing.assert_allclose(samples[2, [0, 1, 3], 0], np.log([100000.0, 10000.0, 100.0]))
+    assert np.isnan(samples[:, 2, 0]).all()
+
+
+def test_timeline_sampling_interpolates_hybrid_columns_before_band_mean():
+    latitudes = np.array([-45.0, 45.0])
+    field = xr.DataArray([[[0.0, 0.0], [1.0, 2.0], [2.0, 2.0]]],
+                         dims=("time", "lev", "lat"), coords={"time": [0], "lev": [0, 1, 2],
+                                                                   "lat": latitudes})
+    pressure = xr.DataArray([[[100000.0, 100000.0], [10000.0, 20000.0], [1000.0, 1000.0]]],
+                            dims=("time", "lev", "lat"), coords=field.coords)
+    samples = _band_samples(field, pressure, latitudes)
+    np.testing.assert_allclose(samples[2, 1, 0], 1.5)
+    assert np.isnan(samples[2, 3, 0])  # 1 hPa is above both native columns.
+
+
+def test_zonal_plot_has_working_approximate_height_scale(tmp_path):
+    pressure = np.geomspace(1000.0, 0.00002, 124)
+    height = _pressure_to_height([1000.0, 100.0, 10.0, 1.0])
+    np.testing.assert_allclose(height, [0.0, 7 * np.log(10), 14 * np.log(10), 21 * np.log(10)])
+    np.testing.assert_allclose(_height_to_pressure(height), [1000.0, 100.0, 10.0, 1.0])
+    path = tmp_path / "zonal.png"
+    _plot_zonal(np.ones((12, 124, 36)), pressure, np.arange(-87.5, 90.0, 5.0),
+                "SOCOL", "temperature", "K", path)
+    assert path.stat().st_size > 1000
 
 
 def test_browse_cli(monkeypatch, capsys):
