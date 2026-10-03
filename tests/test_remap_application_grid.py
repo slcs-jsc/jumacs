@@ -216,6 +216,33 @@ def test_the_published_pressures_and_the_counts_are_left_behind():
     assert "n_years" in remapped.attrs["count_statistics"]
 
 
+def test_the_application_kind_validates_without_naming_the_statistics():
+    remapped = remap.remap_product(product(), validate=False)
+    bands = remapped.sizes["lat"]
+    assert not cf.validate_product(remapped, names=("o3", "ta"), grid=GRID, kind="application",
+                                   latitude_bands=bands)
+    cf.assert_product(remapped, names=("o3", "ta"), grid=GRID, kind="application", latitude_bands=bands)
+    assert cf.default_statistics("application") == cf.APPLICATION_STATISTIC_ORDER
+    assert cf.default_statistics("individual") == cf.STATISTIC_ORDER
+
+
+def test_the_individual_kind_still_asks_for_the_sample_count():
+    source = product()
+    assert not [problem for problem in cf.validate_product(source, names=("o3", "ta"), grid=GRID)
+                if problem.startswith("missing field")]
+    thinned = source.drop_vars(["o3_n_years", "ta_n_years"])
+    problems = cf.validate_product(thinned, names=("o3", "ta"), grid=GRID)
+    assert "missing field o3_n_years" in problems and "missing field ta_n_years" in problems
+
+
+def test_an_explicit_statistics_request_overrides_the_kind_default():
+    remapped = remap.remap_product(product(), validate=False)
+    problems = cf.validate_product(remapped, names=("o3", "ta"), grid=GRID, statistics=cf.STATISTIC_ORDER,
+                                   kind="application", latitude_bands=remapped.sizes["lat"])
+    assert "missing field o3_n_years" in problems and "missing field ta_n_years" in problems
+    assert not [problem for problem in problems if problem.startswith("missing field o3_mean")]
+
+
 def test_the_method_of_the_remap_is_written_into_the_product_it_describes():
     source = product()
     source["ta_mean"].attrs["vertical_treatment"] = "climatological statistics of the model on its native levels"

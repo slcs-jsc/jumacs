@@ -19,6 +19,9 @@ import numpy as np
 CONVENTIONS = "CF-1.13"
 BOUNDS_DIMENSION = "nv"
 STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum", "n_years")
+# An application-grid product holds no sample count: a remapped or extended statistic is a merge of
+# climatologies, so the years behind it belong to the source products and not to the merged field.
+APPLICATION_STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum")
 STATISTIC_DTYPES = {"mean": "float32", "sigma": "float32", "minimum": "float32",
                     "maximum": "float32", "n_years": "int16"}
 
@@ -371,20 +374,34 @@ def _validate_application_vertical(ds, names, statistics, grid, latitude_bands=N
     return problems
 
 
-def validate_product(ds, names=(), grid=None, statistics=STATISTIC_ORDER, kind="individual", latitude_bands=None):
+def default_statistics(kind):
+    """The statistics a product of this kind is expected to carry.
+
+    A native individual climatology reports how many years stand behind each statistic; an
+    application-grid product does not, because Stage 1 and Stage 2 both leave the count out.
+    """
+    if kind == "individual":
+        return STATISTIC_ORDER
+    if kind == "application":
+        return APPLICATION_STATISTIC_ORDER
+    raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'application'")
+
+
+def validate_product(ds, names=(), grid=None, statistics=None, kind="individual", latitude_bands=None):
     """Structural and methodological checks on a written product (no external checker).
 
     ``kind`` selects the vertical contract: ``"individual"`` for one model's own
     climatology, which stays on the native grid and publishes the pressure of its
-    levels; ``"application"`` for a combined product on the shared grid.
+    levels; ``"application"`` for a combined product on the shared grid. It also picks
+    the statistics a product must carry, so validating an application product needs no
+    extra argument; an explicit ``statistics`` always overrides that choice.
     """
-    problems = _validate_common(ds, names, statistics)
+    expected = default_statistics(kind) if statistics is None else tuple(statistics)
+    problems = _validate_common(ds, names, expected)
     if kind == "individual":
-        problems.extend(_validate_native_vertical(ds, names, statistics, grid))
-    elif kind == "application":
-        problems.extend(_validate_application_vertical(ds, names, statistics, grid, latitude_bands))
+        problems.extend(_validate_native_vertical(ds, names, expected, grid))
     else:
-        raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'application'")
+        problems.extend(_validate_application_vertical(ds, names, expected, grid, latitude_bands))
     return problems
 
 

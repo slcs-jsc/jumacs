@@ -8,7 +8,7 @@ import xarray as xr
 from .config import ROOT, load_config
 from .netcdf import open_cftime_dataset
 from .comparison import _pressure
-from .vertical import interpolate_log_pressure, product_pressure, vertical_dimension
+from .vertical import MINIMUM_OVERLAP_LEVELS, interpolate_log_pressure, product_pressure, vertical_dimension
 
 
 def coverage_for_field(field, pressure, height=None):
@@ -315,6 +315,9 @@ def extension_row(model, variable, entry, donor_entry, donor_mapped, group, focu
     """One CCMI model and variable against WACCM-X, decided from the level masks rather than endpoints.
 
     The lower valid extent is descriptive and any-finite based; overlap and extension use usable masks only.
+    A candidate must offer the overlap the extension stage can actually use, which is at least
+    MINIMUM_OVERLAP_LEVELS usable levels: one shared level fixes no transition, so it is reported as an
+    overlap without extension rather than as a candidate.
     """
     ccmi_mask = usable_mask(entry, sample_fraction)
     donor_mask = usable_mask(donor_entry, sample_fraction)
@@ -334,8 +337,10 @@ def extension_row(model, variable, entry, donor_entry, donor_mapped, group, focu
         status = "no_waccmx_variable"
     elif overlap_levels == 0:
         status = "no_overlap"
+    elif not extends_upward or overlap_levels < MINIMUM_OVERLAP_LEVELS:
+        status = "overlap_no_extension"
     else:
-        status = "extension_candidate" if extends_upward else "overlap_no_extension"
+        status = "extension_candidate"
     return {"model": model, "variable": variable, "group": group, "application_focus": variable in focus,
             "product_variable": entry["variable"] if entry else "", "units": entry["units"] if entry else "",
             "present": entry is not None,             "is_3d": bool(entry["is_3d"]) if entry else False,
@@ -462,6 +467,9 @@ def extension_markdown(path, models, donor, rows, sample_fraction, level_fractio
               "stays broken instead of being bridged by endpoint ranges.",
               "- Extends upward means WACCM-X is usable at lower pressure, that is higher altitude, than the top "
               "of the CCMI usable range.",
+               (f"- A candidate needs both that upward reach and at least {MINIMUM_OVERLAP_LEVELS:d} usable levels in "
+                f"common: {MINIMUM_OVERLAP_LEVELS:d} is the fewest on which a transition can be defined, so a thinner "
+                "overlap is reported as an overlap without extension, which is what the extension stage refuses too."),
               f"- *Broadly usable* (CSV and JSON) only labels a field finite on at least {level_fraction:g} of the "
               "levels; it plays no part in the overlap or extension decision.",
               "- Status: not_applicable (absent or two-dimensional), mapping_unresolved (no configured WACCM-X "
@@ -508,6 +516,7 @@ def extension_json(path, models, donor, inventories, rows, sample_fraction, leve
         "donor_model": donor,
         "usable_sample_fraction": sample_fraction,
         "usable_level_fraction": level_fraction,
+        "minimum_overlap_levels": MINIMUM_OVERLAP_LEVELS,
         "extension_statuses": list(EXTENSION_STATUSES),
         "definitions": {
             "usable_level": f"a pressure level where at least {sample_fraction:g} of the months and latitudes are "
@@ -528,14 +537,18 @@ def extension_json(path, models, donor, inventories, rows, sample_fraction, leve
             "native_pressure_min_pa": "lowest pressure the model publishes for the field, in Pa",
             "native_pressure_max_pa": "highest pressure the model publishes for the field, in Pa",
             "overlap": "levels usable in both the CCMI model and WACCM-X, combined level by level",
+            "minimum_overlap_levels": f"the fewest usable levels in common on which a transition can be defined, "
+                                       f"{MINIMUM_OVERLAP_LEVELS:d} — the same floor the extension stage applies",
             "waccmx_extends_upward": "WACCM-X is usable at lower pressure, that is higher altitude, than the top "
                                      "of the CCMI usable range",
             "not_applicable": "the CCMI model lacks the variable or the field is two-dimensional",
             "mapping_unresolved": "no WACCM-X counterpart is configured, and none is guessed",
             "no_waccmx_variable": "the WACCM-X counterpart is configured but the product has no such field",
             "no_overlap": "both sources have fields but no usable level in common",
-            "overlap_no_extension": "they overlap and WACCM-X reaches no higher",
-            "extension_candidate": "they overlap and WACCM-X reaches to lower pressure",
+            "overlap_no_extension": "they overlap, but WACCM-X reaches no higher or the overlap is thinner than a "
+                                    "transition needs",
+            "extension_candidate": "they share the minimum number of usable levels and WACCM-X reaches to lower "
+                                   "pressure",
             "level_finite_fractions": "finite fraction of months and latitudes per level, in grid order",
             "approximate_altitude": "7 km scale-height estimate, limited above about 80 km"},
         "pressure_coordinate": {"name": grid["coordinate"], "units": grid["units"], "level_count": len(grid["levels"]),

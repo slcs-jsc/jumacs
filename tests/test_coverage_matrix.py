@@ -19,6 +19,7 @@ LEVEL_COUNT = len(config.vertical_grid()["levels"])
 NATIVE_COUNT = 100
 NATIVE_LEVEL = "plev"
 FULL = (0, NATIVE_COUNT)
+MODEL_WINDOW = (0, 70)
 
 
 def levels():
@@ -40,6 +41,20 @@ def inside(grid, top_pa, bottom_pa):
     """Application grid levels a native profile reaching top..bottom can supply."""
     grid = np.asarray(grid, float)
     return grid[(grid <= top_pa) & (grid >= bottom_pa)]
+
+
+def donor_reaching(target, count=400):
+    """A donor grid and window leaving exactly `target` usable levels in common with MODEL_WINDOW.
+
+    A finer native grid than the model\'s is used so that the overlap can be adjusted one level at a
+    time, whichever resolution the shared application grid happens to have.
+    """
+    fine = np.logspace(5.0, -3.5, count)
+    model_top = span(MODEL_WINDOW)[1]
+    for start in range(count):
+        if inside(levels(), float(fine[start]), model_top).size == target:
+            return fine, (start, count)
+    raise AssertionError(f"no donor window on {count} levels leaves exactly {target} levels in common")
 
 
 def write_product(workspace, model, fields, native=None):
@@ -247,6 +262,36 @@ def test_overlap_without_upward_reach_is_not_a_candidate(workspace):
     assert ozone["overlap_level_count"] == inside(grid, *span((0, 50))).size
     assert ozone["overlap_min_pressure_pa"] == pytest.approx(inside(grid, *span((0, 50))).min())
     assert ozone["waccmx_extends_upward"] is False
+
+
+def test_an_overlap_thinner_than_a_transition_needs_is_not_a_candidate(workspace):
+    grid = levels()
+    donor_grid, window = donor_reaching(1)
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": MODEL_WINDOW}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": window}}, native=donor_grid)
+    _, rows = matrix(["CMAM", "WACCM-X"])
+    ozone = row_for(rows, "CMAM", "O3")
+    assert ozone["overlap_level_count"] == 1
+    assert ozone["waccmx_extends_upward"] is True
+    assert ozone["extension_status"] == "overlap_no_extension"
+    shared = inside(grid, float(donor_grid[window[0]]), span(MODEL_WINDOW)[1])
+    assert ozone["overlap_min_pressure_pa"] == pytest.approx(inside(grid, *span(MODEL_WINDOW)).min())
+    assert ozone["overlap_max_pressure_pa"] == pytest.approx(shared.max())
+
+
+def test_the_shared_minimum_overlap_of_levels_is_what_makes_a_candidate(workspace):
+    grid = levels()
+    donor_grid, window = donor_reaching(coverage.MINIMUM_OVERLAP_LEVELS)
+    write_product(workspace, "CMAM", {"o3": {"units": "1e-6", "levels": MODEL_WINDOW}})
+    write_product(workspace, "WACCM-X", {"O3": {"units": "1e-6", "levels": window}}, native=donor_grid)
+    _, rows = matrix(["CMAM", "WACCM-X"])
+    ozone = row_for(rows, "CMAM", "O3")
+    assert ozone["overlap_level_count"] == coverage.MINIMUM_OVERLAP_LEVELS == 2
+    assert ozone["waccmx_extends_upward"] is True
+    assert ozone["extension_status"] == "extension_candidate"
+    assert ozone["overlap_min_pressure_pa"] == pytest.approx(inside(grid, *span(MODEL_WINDOW)).min())
+    assert ozone["overlap_max_pressure_pa"] == pytest.approx(
+        inside(grid, float(donor_grid[window[0]]), span(MODEL_WINDOW)[1]).max())
 
 
 def test_overlap_is_taken_from_the_masks_so_internal_gaps_stay_visible(workspace):

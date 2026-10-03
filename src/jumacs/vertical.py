@@ -4,6 +4,11 @@ import xarray as xr
 
 LEVEL_PRIORITY = ("lev", "plev", "pressure")
 NON_VERTICAL = ("time", "lat", "month", "lon", "latitude")
+
+# The fewest levels two profiles must hold usable in common before anything can be joined on them: a single
+# shared level fixes no transition, so the extension stage refuses it and the coverage diagnostics do not
+# offer it as a candidate.
+MINIMUM_OVERLAP_LEVELS = 2
 PA_TO_HPA = {"pa": 1.0, "pascal": 1.0, "pascals": 1.0, "hpa": 100.0, "hectopascal": 100.0, "hectopascals": 100.0}
 
 PRESSURE_ATTRS = {"standard_name": "air_pressure", "units": "Pa", "positive": "down",
