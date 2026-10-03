@@ -30,6 +30,11 @@ def main(argv=None):
     build.add_argument("--start-year", type=int)
     build.add_argument("--end-year", type=int)
     build.add_argument("--variable", action="append", help="Advanced: restrict to selected variables instead of everything configured")
+    application = sub.add_parser("application", help="Write one CCMI application-grid climatology extended with WACCM-X")
+    application.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"), required=True)
+    application.add_argument("--start-year", type=int)
+    application.add_argument("--end-year", type=int)
+    application.add_argument("--no-extension", action="store_true", help="Write the remapped CCMI product without WACCM-X")
     for command, help_text in (
         ("inspect", "Show registry, archive inventory, and readiness for a model"),
         ("download", "Plan archive transfers; --execute transfers"),
@@ -105,6 +110,11 @@ def main(argv=None):
         help="Minimum fraction of the months and latitudes of a pressure level that must be finite for that level to count (default: the configured coverage.usable_sample_fraction)",
     )
     args = parser.parse_args(argv)
+    if args.command == "application":
+        from .application import build_application_product
+        print(build_application_product(args.model, args.start_year, args.end_year,
+                                        extend=not args.no_extension))
+        return
     if args.command == "coverage-matrix":
         from .coverage import coverage_matrix_command as run_coverage_matrix
 
