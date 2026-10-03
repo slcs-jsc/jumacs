@@ -22,8 +22,13 @@ if [[ "$destination" == / || "$destination" == . || "$destination" == .. || "$de
   echo "Mirror destination is unsafe: $destination" >&2
   exit 2
 fi
+destination="${destination%/}"
 if [[ ! -d "$source" ]]; then
   echo "Mirror source is missing: $source" >&2
+  exit 2
+fi
+if [[ "$mode" == web && ( ! -f "$source/index.html" || ! -d "$source/products/application" ) ]]; then
+  echo "Web mirror requires a generated application site with index.html and products/application/" >&2
   exit 2
 fi
 
@@ -32,25 +37,7 @@ if [[ "$mode" == local ]]; then
     echo "Run mirror-local from a separate local Git checkout with a regular site/ directory" >&2
     exit 2
   fi
-  climatologies=(
-    GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc
-    EMAC/jumacs_emac_refd1_climatology_1985-2014.nc
-    WACCM-X/jumacs_waccmx_climatology_1985-2014.nc
-    combined/jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc
-    combined/jumacs_emac_waccmx_1985-2014_5deg_1km.nc
-  )
-  for relative in "${climatologies[@]}"; do
-    if [[ ! -f "$hpc_root/products/climatology/$relative" ]]; then
-      echo "Climatology source is missing: $relative" >&2
-      exit 2
-    fi
-  done
   rsync -av --delete "$source/" "$destination/"
-  for relative in "${climatologies[@]}"; do
-    target="$root/products/climatology/$relative"
-    mkdir -p "$(dirname "$target")"
-    rsync -av "$hpc_root/products/climatology/$relative" "$target"
-  done
 else
   rsync -av --delete "$source/" "$destination/"
 fi

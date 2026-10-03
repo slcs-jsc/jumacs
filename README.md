@@ -118,7 +118,9 @@ Generate the application-product browser **on the HPC system**, where all applic
 ```bash
 cd /p/data1/slmet/model_data/jumacs
 jumacs browse --start-year 1985 --end-year 2014
-rsync -av --delete site/ webserver:/path/to/jumacs/
+# Back in the local Git checkout:
+make mirror-local
+JUMACS_WEB_SITE_MIRROR=user@datapub.fz-juelich.de:/absolute/path/ make mirror-web
 ```
 
-The older `make site` and `make mirror-local` commands serve the legacy quicklook/catalog site; they are separate from this application-product browser. JuMACS does not use GitHub Pages. See [docs/README.md](docs/README.md) for the directory map.
+`make mirror-local` copies this complete `site/` tree, including its application NetCDF downloads, from the mounted HPC directory into the local checkout's ignored `site/`. Run `make mirror-web` from that local checkout with `JUMACS_WEB_SITE_MIRROR=user@datapub.fz-juelich.de:/absolute/path/` set to the chosen web destination. It refuses a site without the generated application-product tree. The older `make site` command serves the legacy quicklook/catalog page. JuMACS does not use GitHub Pages. See [docs/README.md](docs/README.md) for the directory map.

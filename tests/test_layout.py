@@ -47,29 +47,19 @@ def test_mirror_rejects_unset_destination():
     for key in ("JUMACS_WEB_SITE_MIRROR", "JUMACS_WEB_DATA_MIRROR"):
         env.pop(key, None)
     for mode in ("web", "data"):
-        result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), mode], env=env, capture_output=True, text=True)
+        result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), mode], env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 2 and "unset or empty" in result.stderr
 
 
-def test_local_mirror_reads_hpc_tree_and_selects_only_five_products(tmp_path):
+def test_local_mirror_copies_self_contained_hpc_site(tmp_path):
     checkout = tmp_path / "checkout"
     (checkout / "scripts").mkdir(parents=True)
     (checkout / ".git").mkdir()
     shutil.copy2(ROOT / "scripts/mirror.sh", checkout / "scripts/mirror.sh")
     hpc = tmp_path / "hpc"
-    (hpc / "site").mkdir(parents=True)
+    (hpc / "site/products/application/SOCOL").mkdir(parents=True)
     (hpc / "site/index.html").write_text("site")
-    selected = (
-        "GEOSCCM/jumacs_geosccm_refd1_climatology_1985-2014.nc",
-        "EMAC/jumacs_emac_refd1_climatology_1985-2014.nc",
-        "WACCM-X/jumacs_waccmx_climatology_1985-2014.nc",
-        "combined/jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc",
-        "combined/jumacs_emac_waccmx_1985-2014_5deg_1km.nc",
-    )
-    for name in selected:
-        path = hpc / "products/climatology" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"synthetic")
+    (hpc / "site/products/application/SOCOL/jumacs_socol_application_climatology_1985-2014.nc").write_bytes(b"synthetic")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_rsync = fake_bin / "rsync"
@@ -80,21 +70,48 @@ def test_local_mirror_reads_hpc_tree_and_selects_only_five_products(tmp_path):
     env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
     env["JUMACS_RSYNC_LOG"] = str(log)
     env["JUMACS_HPC_ROOT"] = str(hpc)
-    result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     calls = log.read_text().splitlines()
-    assert len(calls) == 6
+    assert len(calls) == 1
     assert "--delete" in calls[0] and str(hpc / "site") in calls[0]
-    assert all("--delete" not in call for call in calls[1:])
-    assert all(name in call for name, call in zip(selected, calls[1:]))
-    assert all(str(checkout / "products/climatology") in call for call in calls[1:])
+    assert str(checkout / "site") in calls[0]
 
 
 def test_local_mirror_rejects_missing_hpc_source(tmp_path):
     env = os.environ.copy()
     env["JUMACS_HPC_ROOT"] = str(tmp_path / "missing")
-    result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), "local"], env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 2 and "Mirror source is missing" in result.stderr
+
+
+def test_web_mirror_uses_complete_local_site(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/mirror.sh", checkout / "scripts/mirror.sh")
+    site = checkout / "site"
+    site.mkdir()
+    (site / "index.html").write_text("site")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_rsync = fake_bin / "rsync"
+    fake_rsync.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$JUMACS_RSYNC_LOG"\n')
+    fake_rsync.chmod(0o755)
+    log = tmp_path / "rsync.log"
+    env = os.environ.copy()
+    env["PATH"] = str(fake_bin) + os.pathsep + env["PATH"]
+    env["JUMACS_RSYNC_LOG"] = str(log)
+    env["JUMACS_WEB_SITE_MIRROR"] = "datapub.fz-juelich.de:/var/www/jumacs/"
+    missing = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web"],
+                             env=env, capture_output=True, text=True, check=False)
+    assert missing.returncode == 2 and "generated application site" in missing.stderr
+    (site / "products/application/SOCOL").mkdir(parents=True)
+    (site / "products/application/SOCOL/application.nc").write_bytes(b"synthetic")
+    result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web"],
+                            env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == [
+        f"-av --delete {site}/ datapub.fz-juelich.de:/var/www/jumacs/"]
 
 
 def test_download_all_does_not_leak_its_arguments_to_python_setup(tmp_path):
@@ -128,7 +145,7 @@ def test_download_all_does_not_leak_its_arguments_to_python_setup(tmp_path):
            "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "LANG": "C"}
     for args in ([], ["--execute"]):
         result = subprocess.run(["bash", str(checkout / "scripts/download_all.sh")] + args,
-                                env=env, capture_output=True, text=True, cwd=checkout)
+                                env=env, capture_output=True, text=True, cwd=checkout, check=False)
         assert "Unknown option" not in result.stdout + result.stderr, result.stdout + result.stderr
         assert "Python 3.12 (mock)" in result.stdout, result.stdout + result.stderr
         assert result.returncode == 0, result.stdout + result.stderr
