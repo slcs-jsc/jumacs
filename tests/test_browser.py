@@ -1,5 +1,6 @@
 """Static application-product browser wiring and regeneration."""
 
+import json
 import re
 from pathlib import Path
 
@@ -53,6 +54,16 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
     assert (site / "products/application/SOCOL" / product.name).read_bytes() == product.read_bytes()
     html = (site / "index.html").read_text()
     assert "SOCOL" in html and "temperature" in html and "K" in html
+    assert '<select id="model">' in html and 'id="variables"' in html
+    assert 'data-view="zonal"' in html and 'data-view="annual"' in html
+    assert 'data-view="timeline"' in html
+    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
+                                  html, re.DOTALL).group(1))
+    assert len(catalog) == 1
+    assert catalog[0]["model"] == "SOCOL" and catalog[0]["variable"] == "ta"
+    for link in [catalog[0]["product"], *catalog[0]["views"].values()]:
+        assert not Path(link).is_absolute() and "://" not in link
+        assert (site / link).is_file()
     for link in re.findall(r'(?:href|src)="([^"]+)"', html):
         if link.startswith("#"):
             continue
@@ -67,6 +78,28 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
     assert not stale.exists()
     assert not (site / "plots/SOCOL/ta_zonal.png").exists()
     assert (site / "plots/SOCOL/o3_zonal.png").exists()
+
+
+def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    def placeholder(*args):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    _product(tmp_path)
+    zonal = tmp_path / "data/processed/SOCOL/refD1/ta_monthly_zonal.nc"
+    zonal.parent.mkdir(parents=True)
+    xr.Dataset({"ta": (("time", "plev", "lat"), np.ones((24, 2, 3)), {"units": "K"})},
+               coords={"time": np.arange("1985-01", "1987-01", dtype="datetime64[M]").astype("datetime64[ns]"),
+                       "plev": ("plev", [30000.0, 3000.0], {"units": "Pa"}),
+                       "lat": [-62.5, 2.5, 57.5]}).to_netcdf(zonal)
+    result = build_site(1985, 2014, root=tmp_path)
+    assert result["png_files"] == 3 and result["timeline_skipped"] == []
+    assert (result["site"] / "plots/SOCOL/ta_timeline.png").stat().st_size > 1000
+    html = (result["site"] / "index.html").read_text()
+    assert "plots/SOCOL/ta_timeline.png" in html
 
 
 def test_browse_cli(monkeypatch, capsys):
