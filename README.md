@@ -44,6 +44,7 @@ jumacs quicklook --model CMAM --start-year 1985 --end-year 2014
 jumacs build --model CMAM,SOCOL --start-year 1985 --end-year 2014   # several models in one call
 jumacs build --model all              # every ready model with validated zonal processing
 jumacs application --model SOCOL --start-year 1985 --end-year 2014  # pressure-grid product
+jumacs browse --start-year 1985 --end-year 2014  # static site from existing application products
 jumacs download --model GEOSCCM --all-files  # complete-archive mirror plan (all families/members, latest versions)
 jumacs download-audit  # audit all mirror plans, write products/comparison/download_plan_summary.{csv,md}
 ```
@@ -112,22 +113,12 @@ The compact file is a straightforward month/height/latitude input for a JuMACS-a
 
 `jumacs/` is both the Git root and the HPC working directory. Tracked material is limited to `src/`, `config/`, `tests/`, `docs/`, `scripts/`, and root metadata (`README.md`, `LICENSE`, `CITATION.cff`, `pyproject.toml`, `Makefile`, `.gitignore`). The full model files in `data/raw/`, monthly zonal series in `data/processed/`, generated scientific files in `products/`, and the static browser in `site/` are ignored by Git. `cache/` and `tmp/` are ignored work areas. The path defaults are documented in `config/jumacs.yaml` and resolved from the repository root. `products/release/` is reserved for explicitly selected public datasets; nothing is added automatically.
 
-`make site` rebuilds `site/index.html` from existing plot catalogs without redrawing the plots. Internal browser links are relative. By default the browser does not link to NetCDF products because `site/` must also work when mirrored by itself. Set `JUMACS_PRODUCT_URL_BASE` during site generation only if those selected compact files are published at that URL.
-
-Run the local mirror **from the notebook Git clone**. It reads the mounted HPC tree at `~/jumount/data/slmet/model_data/jumacs` by default and writes the static browser to the clone's ignored `site/` directory. It also copies exactly five finished 1985–2014 NetCDF products to the clone's ignored `products/climatology/`: the GEOSCCM, EMAC and WACCM-X climatology files (one CF-1.13 NetCDF each) and the two compact extensions. The full monthly zonal series and all diagnostics are excluded. The site is an exact mirror; NetCDF files are copied incrementally without deletion.
+Generate the application-product browser **on the HPC system**, where all application NetCDF files are stored. The command discovers matching products, plots each three-dimensional `*_mean` field for January, April, July and October plus its annual cycle, and copies the NetCDF files into `site/products/application/`. The generated `site/` tree has only relative links and can be mirrored as one unit. Re-running the command replaces generated plots and copied application products, removing stale entries.
 
 ```bash
-cd ~/wrk/clim/jumacs
-make mirror-local
+cd /p/data1/slmet/model_data/jumacs
+jumacs browse --start-year 1985 --end-year 2014
+rsync -av --delete site/ webserver:/path/to/jumacs/
 ```
 
-Set `JUMACS_HPC_ROOT` if the HPC tree is mounted elsewhere. The web and publication commands still require explicit destinations:
-
-```bash
-export JUMACS_WEB_SITE_MIRROR=user@web:/path/to/site
-make mirror-web
-export JUMACS_WEB_DATA_MIRROR=user@web:/path/to/data
-make publish-data  # only products/release/
-```
-
-The intended arrangement is GitHub for code and documentation, the HPC working repository for full data and products, a local Git checkout with a mirrored site, and a web server with the mirrored site plus selected released data. JuMACS does not use GitHub Pages. See [docs/README.md](docs/README.md) for the directory map.
+The older `make site` and `make mirror-local` commands serve the legacy quicklook/catalog site; they are separate from this application-product browser. JuMACS does not use GitHub Pages. See [docs/README.md](docs/README.md) for the directory map.

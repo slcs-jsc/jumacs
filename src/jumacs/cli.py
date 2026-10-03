@@ -47,6 +47,10 @@ def main(argv=None):
     application.add_argument("--start-year", type=int)
     application.add_argument("--end-year", type=int)
     application.add_argument("--no-extension", action="store_true", help="Write the remapped CCMI product without WACCM-X")
+    browse = sub.add_parser("browse", help="Build a static website from existing application products")
+    browse.add_argument("--start-year", type=int)
+    browse.add_argument("--end-year", type=int)
+    browse.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"))
     for command, help_text in (
         ("inspect", "Show registry, archive inventory, and readiness for a model"),
         ("download", "Plan archive transfers; --execute transfers"),
@@ -122,6 +126,12 @@ def main(argv=None):
         help="Minimum fraction of the months and latitudes of a pressure level that must be finite for that level to count (default: the configured coverage.usable_sample_fraction)",
     )
     args = parser.parse_args(argv)
+    if args.command == "browse":
+        from .browser import build_site
+        report = build_site(args.start_year, args.end_year, model=args.model)
+        print(json.dumps({key: str(value) if key == "site" else value
+                          for key, value in report.items()}, indent=2))
+        return
     if args.command == "application":
         from .application import build_application_product
         print(build_application_product(args.model, args.start_year, args.end_year,
