@@ -165,7 +165,7 @@ def _html(records, start_year, end_year, inventory_rows):
     for model, product, fields in records:
         for field in fields:
             catalog.append({"model": model, "variable": field["native"],
-                            "label": field["label"], "units": field["units"],
+                            "canonical": field["canonical"], "label": field["label"], "units": field["units"],
                             "product": f"products/application/{model}/{product.name}",
                             "views": {name: path.as_posix() for name, path in field["views"].items()}})
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
@@ -263,7 +263,13 @@ function render() {
     tab.classList.toggle('active', tab.dataset.view === view);
   }
 }
-model.onchange = () => { current = null; render(); };
+model.onchange = () => {
+  const canonical = current && current.canonical;
+  const match = catalog.find(row => row.model === model.value && row.canonical === canonical);
+  if (match && search.value && !available().includes(match)) search.value = '';
+  current = match || null;
+  render();
+};
 search.oninput = () => { current = null; render(); };
 for (const tab of document.querySelectorAll('.tab')) tab.onclick = () => { view = tab.dataset.view; render(); };
 function move(step) {
@@ -412,7 +418,8 @@ def _render_model(model_name, product, root, staging):
             paths = _plot_paths(model_name, native)
             for path in paths:
                 (staging / path).parent.mkdir(parents=True, exist_ok=True)
-            label = mapping.get(native, native).replace("_", " ")
+            canonical = mapping.get(native, native)
+            label = canonical.replace("_", " ")
             units = str(field.attrs.get("units", ""))
             _plot_zonal(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[0])
             _plot_annual(field, model_name, label, units, staging / paths[1])
@@ -426,7 +433,8 @@ def _render_model(model_name, product, root, staging):
                     timeline_skipped.append((model_name, native, "no usable native pressure profile"))
             else:
                 timeline_skipped.append((model_name, native, "monthly zonal source missing"))
-            fields.append({"native": native, "label": label, "units": units, "views": views})
+            fields.append({"native": native, "canonical": canonical, "label": label,
+                           "units": units, "views": views})
     copy = staging / "products" / "application" / model_name / product.name
     copy.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(product, copy)

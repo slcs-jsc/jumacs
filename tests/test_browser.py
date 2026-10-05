@@ -67,6 +67,7 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
                                   html, re.DOTALL).group(1))
     assert len(catalog) == 1
     assert catalog[0]["model"] == "SOCOL" and catalog[0]["variable"] == "ta"
+    assert catalog[0]["canonical"] == "temperature"
     for link in [catalog[0]["product"], *catalog[0]["views"].values()]:
         assert not Path(link).is_absolute() and "://" not in link
         assert (site / link).is_file()
@@ -84,6 +85,19 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
     assert not stale.exists()
     assert not (site / "plots/SOCOL/ta_zonal.png").exists()
     assert (site / "plots/SOCOL/o3_zonal.png").exists()
+
+
+def test_catalog_keeps_canonical_identity_across_different_native_names():
+    from jumacs.browser import _html
+
+    records = [(model, Path(f"{model}.nc"), [{"native": native, "canonical": "temperature",
+                                               "label": "temperature", "units": "K", "views": {}}])
+               for model, native in (("SOCOL", "ta"), ("WACCM-X", "T"))]
+    html = _html(records, 1985, 2014, [])
+    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
+                                   html, re.DOTALL).group(1))
+    assert [row["variable"] for row in catalog] == ["ta", "T"]
+    assert [row["canonical"] for row in catalog] == ["temperature", "temperature"]
 
 
 def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):
