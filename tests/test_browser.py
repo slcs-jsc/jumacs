@@ -86,6 +86,18 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
     assert (site / "plots/SOCOL/o3_zonal.png").exists()
 
 
+def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):
+    _product(tmp_path, model="CMAM")
+    _product(tmp_path, model="SOCOL")
+    report = build_site(1985, 2014, root=tmp_path, workers=2)
+    assert report["models"] == ["CMAM", "SOCOL"]
+    assert report["png_files"] == 4 and report["netcdf_files"] == 2
+    for model in report["models"]:
+        assert (report["site"] / f"plots/{model}/ta_zonal.png").stat().st_size > 1000
+        assert (report["site"] / f"plots/{model}/ta_annual.png").stat().st_size > 1000
+        assert (report["site"] / f"products/application/{model}/jumacs_{model.lower()}_application_climatology_1985-2014.nc").exists()
+
+
 def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
     from jumacs import browser
 
@@ -151,11 +163,11 @@ def test_browse_cli(monkeypatch, capsys):
 
     calls = []
 
-    def build(start, end, *, model):
-        calls.append((start, end, model))
+    def build(start, end, *, model, workers):
+        calls.append((start, end, model, workers))
         return {"site": Path("site"), "models": ["SOCOL"]}
 
     monkeypatch.setattr(browser, "build_site", build)
-    main(["browse", "--start-year", "1985", "--end-year", "2014", "--model", "SOCOL"])
-    assert calls == [(1985, 2014, "SOCOL")]
+    main(["browse", "--start-year", "1985", "--end-year", "2014", "--model", "SOCOL", "--workers", "6"])
+    assert calls == [(1985, 2014, "SOCOL", 6)]
     assert '"models": [\n    "SOCOL"' in capsys.readouterr().out

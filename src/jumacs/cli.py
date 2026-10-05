@@ -51,6 +51,7 @@ def main(argv=None):
     browse.add_argument("--start-year", type=int)
     browse.add_argument("--end-year", type=int)
     browse.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"))
+    browse.add_argument("--workers", type=int, default=4, help="Parallel model plot workers (default: 4)")
     inventory = sub.add_parser("inventory", help="Summarize existing native and application climatology products")
     inventory.add_argument("--start-year", type=int)
     inventory.add_argument("--end-year", type=int)
@@ -137,7 +138,7 @@ def main(argv=None):
         return
     if args.command == "browse":
         from .browser import build_site
-        report = build_site(args.start_year, args.end_year, model=args.model)
+        report = build_site(args.start_year, args.end_year, model=args.model, workers=args.workers)
         print(json.dumps({key: str(value) if key == "site" else value
                           for key, value in report.items()}, indent=2))
         return

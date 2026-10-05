@@ -3,7 +3,9 @@
 import json
 import re
 import shutil
+from concurrent.futures import ProcessPoolExecutor
 from itertools import pairwise
+from multiprocessing import get_context
 from pathlib import Path
 
 import matplotlib
@@ -385,8 +387,56 @@ figcaption span:last-child{display:flex;gap:.4rem;flex-wrap:wrap}
 """
 
 
-def build_site(start_year=None, end_year=None, *, model=None, root=None):
+def _render_model(model_name, product, root, staging):
+    """Render one model in its own staging folder; safe to run in a worker process."""
+    fields = []
+    skipped = []
+    timeline_skipped = []
+    model_config = config.load_config(model_name)
+    mapping = {native: canonical for canonical, native in model_config["variables"].items()}
+    with xr.open_dataset(product) as dataset:
+        pressure_hpa = np.asarray(dataset.pressure.values, dtype=float) / 100.0
+        latitudes = np.asarray(dataset.lat.values, dtype=float)
+        for name in sorted(dataset.data_vars):
+            if not name.endswith("_mean"):
+                continue
+            field = dataset[name]
+            if field.dims != ("time", "pressure", "lat") or field.sizes["time"] != 12:
+                skipped.append((model_name, name, "not a 12-month time×pressure×lat field"))
+                continue
+            native = name[:-5]
+            values = np.asarray(field.values)
+            if not np.isfinite(values[np.array(ZONAL_MONTHS) - 1]).any():
+                skipped.append((model_name, name, "no finite values in displayed months"))
+                continue
+            paths = _plot_paths(model_name, native)
+            for path in paths:
+                (staging / path).parent.mkdir(parents=True, exist_ok=True)
+            label = mapping.get(native, native).replace("_", " ")
+            units = str(field.attrs.get("units", ""))
+            _plot_zonal(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[0])
+            _plot_annual(field, model_name, label, units, staging / paths[1])
+            views = {"zonal": paths[0], "annual": paths[1]}
+            source = root / model_config["paths"]["zonal"] / f"{native}_monthly_zonal.nc"
+            if source.is_file():
+                timeline = _timeline_path(model_name, native)
+                if _plot_timeline(source, native, model_name, label, staging / timeline):
+                    views["timeline"] = timeline
+                else:
+                    timeline_skipped.append((model_name, native, "no usable native pressure profile"))
+            else:
+                timeline_skipped.append((model_name, native, "monthly zonal source missing"))
+            fields.append({"native": native, "label": label, "units": units, "views": views})
+    copy = staging / "products" / "application" / model_name / product.name
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(product, copy)
+    return (model_name, product, fields), skipped, timeline_skipped
+
+
+def build_site(start_year=None, end_year=None, *, model=None, root=None, workers=4):
     """Plot existing products and publish a deployable tree below ``root/site``."""
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
     root = config.ROOT if root is None else Path(root)
     period = config.reference_period()["reference_period"]
     start_year = period["start_year"] if start_year is None else start_year
@@ -404,47 +454,17 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None):
     skipped = []
     timeline_skipped = []
     try:
-        for model_name, product in products:
-            fields = []
-            model_config = config.load_config(model_name)
-            mapping = {native: canonical for canonical, native in model_config["variables"].items()}
-            with xr.open_dataset(product) as dataset:
-                pressure_hpa = np.asarray(dataset.pressure.values, dtype=float) / 100.0
-                latitudes = np.asarray(dataset.lat.values, dtype=float)
-                for name in sorted(dataset.data_vars):
-                    if not name.endswith("_mean"):
-                        continue
-                    field = dataset[name]
-                    if field.dims != ("time", "pressure", "lat") or field.sizes["time"] != 12:
-                        skipped.append((model_name, name, "not a 12-month time×pressure×lat field"))
-                        continue
-                    native = name[:-5]
-                    values = np.asarray(field.values)
-                    if not np.isfinite(values[np.array(ZONAL_MONTHS) - 1]).any():
-                        skipped.append((model_name, name, "no finite values in displayed months"))
-                        continue
-                    paths = _plot_paths(model_name, native)
-                    for path in paths:
-                        (staging / path).parent.mkdir(parents=True, exist_ok=True)
-                    label = mapping.get(native, native).replace("_", " ")
-                    units = str(field.attrs.get("units", ""))
-                    _plot_zonal(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[0])
-                    _plot_annual(field, model_name, label, units, staging / paths[1])
-                    views = {"zonal": paths[0], "annual": paths[1]}
-                    source = root / model_config["paths"]["zonal"] / f"{native}_monthly_zonal.nc"
-                    if source.is_file():
-                        timeline = _timeline_path(model_name, native)
-                        if _plot_timeline(source, native, model_name, label, staging / timeline):
-                            views["timeline"] = timeline
-                        else:
-                            timeline_skipped.append((model_name, native, "no usable native pressure profile"))
-                    else:
-                        timeline_skipped.append((model_name, native, "monthly zonal source missing"))
-                    fields.append({"native": native, "label": label, "units": units, "views": views})
-            copy = staging / "products" / "application" / model_name / product.name
-            copy.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(product, copy)
-            records.append((model_name, product, fields))
+        tasks = [(name, product, root, staging) for name, product in products]
+        if workers == 1 or len(tasks) == 1:
+            results = [_render_model(*task) for task in tasks]
+        else:
+            with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
+                                     mp_context=get_context("spawn")) as pool:
+                results = list(pool.map(_render_model, *zip(*tasks)))
+        for record, model_skipped, model_timeline_skipped in results:
+            records.append(record)
+            skipped.extend(model_skipped)
+            timeline_skipped.extend(model_timeline_skipped)
         assets = staging / "assets"
         assets.mkdir()
         (assets / "style.css").write_text(STYLE, encoding="utf-8")
