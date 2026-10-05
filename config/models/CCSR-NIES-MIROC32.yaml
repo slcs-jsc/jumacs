@@ -9,18 +9,19 @@ model:
   kind: ccmi
   status: ready
   slug: ccsr_nies_miroc32_refd1
-  archive_model: CCSR-NIES-MIROC32
+  archive_model: CCSRNIES-MIROC32
   experiment: refD1
   dataset_uuid: 4262e08336404147878b3adeb4e68950
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NIES/CCSRNIES-MIROC32/refD1/r1i1p1f1
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
-  climatology: false
+  zonal_processing: true
+  climatology: true
   compact_waccmx: false
 paths: {raw: data/raw/CCSR-NIES-MIROC32/refD1, zonal: data/processed/CCSR-NIES-MIROC32/refD1, climatology: products/climatology/CCSR-NIES-MIROC32}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: lev, pressure: lev}
+squeeze_singleton_level: true # Amon surface/column fields carry a spurious lev=1 axis.
 variables:
   Br: br
   BrCl: brcl
@@ -84,3 +85,4 @@ variables:
   tropospheric_ozone_column: tropoz
   zonal_wind: ua
 preferred_families: {}
+preferred_family_when_available: AmonZ

@@ -1,9 +1,9 @@
 """Read each source NetCDF without changing its model identity or grid."""
 import re
-import cftime
-import xarray as xr
 
-from .config import load_config, is_waccmx
+import cftime
+
+from .config import is_waccmx, load_config, preferred_family
 from .netcdf import open_cftime_dataset
 
 
@@ -52,7 +52,7 @@ def source_files(model, variable):
         if files:
             return files
     files = sorted(base.glob(f"*/{name}/{name}_*_{config['model']['archive_model']}_refD1_*.nc"))
-    preferred = config.get("preferred_families", {}).get(name)
+    preferred = preferred_family(config, name, {path.parent.parent.name for path in files})
     if preferred:
         files = [path for path in files if path.parent.parent.name == preferred]
     elif any(path.parent.parent.name == "Amon" for path in files):

@@ -5,10 +5,19 @@ import xarray as xr
 from . import cf
 from .archive import discovered_zm_variables
 from .climatology import build_climatology
+from .config import (
+    ROOT,
+    is_waccmx,
+    load_config,
+    model_names,
+    model_period,
+    models_with_capability,
+    ready_model_names,
+    vertical_grid,
+)
 from .netcdf import open_cftime_dataset
-from .config import ROOT, is_waccmx, load_config, model_period, models_with_capability, model_names, ready_model_names, vertical_grid
-from .zonal import build_zonal
 from .vertical import pressure_report, product_pressure, vertical_dimension
+from .zonal import build_zonal
 
 
 def buildable_model_names():
@@ -30,7 +39,7 @@ def model_list(selection):
 
 
 def configured_variables(model, config):
-    names = set(config["variables"].values())
+    names = set(config["variables"].values()) - set(config.get("exclude_from_climatology", ()))
     if is_waccmx(config):
         names |= set(discovered_zm_variables(model))
     return sorted(names)

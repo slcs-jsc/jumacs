@@ -2,17 +2,21 @@
 import numpy as np
 import xarray as xr
 
-from .config import ROOT, load_config, is_waccmx
-from .reader import open_source, source_files
+from .config import ROOT, is_waccmx, load_config
 from .coordinates import hybrid_pressure
+from .reader import open_source, source_files
 from .vertical import pressure_report
 
 
 def zonal_mean(ds, variable, longitude="lon", source_kind=None):
     data = ds[variable]
     if longitude in data.dims:
-        data = data.where(np.isfinite(data)).mean(longitude, skipna=True, keep_attrs=True)
-        method = "unweighted valid-value longitude mean"
+        if data.sizes[longitude] == 1:
+            data = data.isel({longitude: 0}, drop=True)
+            method = "published zonal field with singleton longitude dimension"
+        else:
+            data = data.where(np.isfinite(data)).mean(longitude, skipna=True, keep_attrs=True)
+            method = "unweighted valid-value longitude mean"
     else:
         method = ("CEDA WACCM-X monthly _zm field (already zonal)" if source_kind == "monthly_zonal_multivariable"
                   else "CEDA AmonZ monthly zonal field (already zonal)")
@@ -110,7 +114,7 @@ def build_zonal(model, variable):
     for path in source_files(model, name):
         with open_source(path, model, name) as ds:
             lon_name = config["coordinates"]["longitude"]
-            if lon_name in ds[name].dims:
+            if lon_name in ds[name].dims and ds[name].sizes[lon_name] > 1:
                 longitudes = np.sort(np.unique(np.mod(ds[lon_name].values, 360)))
                 gaps = np.diff(np.r_[longitudes, longitudes[0] + 360])
                 longitude_checks.append(bool(len(longitudes) > 1 and np.max(gaps) <= 1.5 * np.median(gaps)))
@@ -119,6 +123,8 @@ def build_zonal(model, variable):
             for start in range(0, ds.sizes["time"], 12):
                 chunk = ds.isel(time=slice(start, start + 12))
                 arr = zonal_mean(chunk, name, lon_name, config["model"].get("source_kind")).load()
+                if config.get("squeeze_singleton_level") and arr.sizes.get(config["coordinates"]["level"]) == 1:
+                    arr = arr.squeeze(config["coordinates"]["level"], drop=True)
                 current = (tuple((dim, arr.sizes[dim]) for dim in arr.dims if dim != "time"),
                            arr.attrs.get("units", ""),
                            tuple((dim, tuple(arr[dim].values.tolist())) for dim in arr.dims if dim != "time" and dim in arr.coords))

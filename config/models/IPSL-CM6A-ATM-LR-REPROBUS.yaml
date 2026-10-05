@@ -15,11 +15,11 @@ model:
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
-  climatology: false
+  zonal_processing: true
+  climatology: true
   compact_waccmx: false
 paths: {raw: data/raw/IPSL-CM6A-ATM-LR-REPROBUS/refD1, zonal: data/processed/IPSL-CM6A-ATM-LR-REPROBUS/refD1, climatology: products/climatology/IPSL-CM6A-ATM-LR-REPROBUS}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
 variables:
   Br: br
   BrCl: brcl
@@ -77,3 +77,4 @@ variables:
   tropospheric_ozone_column: tropoz
   zonal_wind: ua
 preferred_families: {}
+preferred_family_when_available: AmonZ

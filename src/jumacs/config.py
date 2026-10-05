@@ -82,6 +82,15 @@ def load_config(model):
     return config
 
 
+def preferred_family(config, variable, available_families):
+    """Select a configured archive family, with an optional default when published."""
+    explicit = config.get("preferred_families", {}).get(variable)
+    if explicit:
+        return explicit
+    default = config.get("preferred_family_when_available")
+    return default if default in available_families else None
+
+
 def require_ready(model):
     model_config = load_config(model)["model"]
     if model_config.get("status", "ready") != "ready":

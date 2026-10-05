@@ -1,12 +1,12 @@
 """Selective, incremental monthly downloads with a preflight size estimate."""
 import hashlib
 import json
-from pathlib import Path
 import re
+
 import requests
 
-from .archive import load_inventory, filter_selected_member, member_of
-from .config import ROOT, load_config, is_waccmx, model_slug
+from .archive import filter_selected_member, load_inventory, member_of
+from .config import ROOT, is_waccmx, load_config, model_slug, preferred_family
 
 
 def select_files(model, start_year, end_year, variables=None):
@@ -20,7 +20,7 @@ def select_files(model, start_year, end_year, variables=None):
         last = max(int(f["end"][:4]) for f in inventory["files"])
         if start_year < first or end_year > last:
             raise ValueError(f"WACCM-X monthly zonal archive covers {first}-{last}; requested {start_year}-{end_year}")
-    wanted = set(variables or config["variables"].values())
+    wanted = set(variables or (set(config["variables"].values()) - set(config.get("exclude_from_climatology", ()))))
     wanted = {config["variables"].get(v, v) for v in wanted}
     if is_waccmx(config):
         available = set(inventory.get("dimensions", {}))
@@ -28,12 +28,14 @@ def select_files(model, start_year, end_year, variables=None):
         return selected, sorted(wanted - available)
     # Precomputed AmonZ is required for species that have no Amon field.
     available_amon = {f["variable"] for f in inventory["files"] if f["family"] == "Amon"}
-    preferred = config.get("preferred_families", {})
+    families = {}
+    for f in inventory["files"]:
+        families.setdefault(f["variable"], set()).add(f["family"])
     selected = []
     for f in inventory["files"]:
         if f["variable"] not in wanted or int(f["end"][:4]) < start_year or int(f["start"][:4]) > end_year:
             continue
-        family = preferred.get(f["variable"])
+        family = preferred_family(config, f["variable"], families[f["variable"]])
         if family and f["family"] != family:
             continue
         if not family and f["family"] == "AmonZ" and f["variable"] in available_amon:
@@ -145,7 +147,7 @@ def _transfer(record):
                     stream.write(chunk)
     expected = record.get("size_bytes")
     if expected and abs(part.stat().st_size - expected) > expected * .15:
-        raise IOError(f"Downloaded size differs from CEDA rounded listing: {dest}")
+        raise OSError(f"Downloaded size differs from CEDA rounded listing: {dest}")
     part.replace(dest)
     if record.get("checksum"):
         algorithm, expected_hash = record["checksum"].split(":", 1)
@@ -154,7 +156,7 @@ def _transfer(record):
             for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
                 digest.update(chunk)
         if digest.hexdigest() != expected_hash:
-            dest.unlink(); raise IOError(f"Checksum mismatch: {dest}")
+            dest.unlink(); raise OSError(f"Checksum mismatch: {dest}")
     return "complete"
 
 
