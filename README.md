@@ -115,8 +115,11 @@ The compact file is a straightforward month/height/latitude input for a JuMACS-a
 
 Generate the application-product browser **on the HPC system**, where the application NetCDF files and monthly zonal series are stored. The interactive page lets you select a model and variable, then switch between January/April/July/October cross sections, the twelve-month climatological annual cycle, and the original multi-year monthly time series where available. Line plots compare five area-weighted latitude bands at 1000, 100, 10 and 1 hPa, sampled by log-pressure interpolation. The command copies application NetCDF files into `site/products/application/`. The generated `site/` tree has only relative links and can be mirrored as one unit. Re-running the command replaces generated plots and copied application products, removing stale entries.
 
+`jumacs inventory` inspects existing native and application climatologies and writes a searchable data-availability overview to `products/catalog/climatology_inventory.{csv,json,md}`. `jumacs browse` refreshes the same inventory before generating the website's **Data availability** view; the Markdown lists the current contents without maintaining a second hand-written inventory here.
+
 ```bash
 cd /p/data1/slmet/model_data/jumacs
+jumacs inventory
 jumacs browse --start-year 1985 --end-year 2014
 # Back in the local Git checkout:
 make mirror-local

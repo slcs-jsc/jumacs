@@ -51,6 +51,10 @@ def main(argv=None):
     browse.add_argument("--start-year", type=int)
     browse.add_argument("--end-year", type=int)
     browse.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"))
+    inventory = sub.add_parser("inventory", help="Summarize existing native and application climatology products")
+    inventory.add_argument("--start-year", type=int)
+    inventory.add_argument("--end-year", type=int)
+    inventory.add_argument("--model", choices=model_names())
     for command, help_text in (
         ("inspect", "Show registry, archive inventory, and readiness for a model"),
         ("download", "Plan archive transfers; --execute transfers"),
@@ -126,6 +130,11 @@ def main(argv=None):
         help="Minimum fraction of the months and latitudes of a pressure level that must be finite for that level to count (default: the configured coverage.usable_sample_fraction)",
     )
     args = parser.parse_args(argv)
+    if args.command == "inventory":
+        from .inventory import build_inventory
+        report = build_inventory(args.start_year, args.end_year, model=args.model)
+        print(json.dumps(report["summary"], indent=2))
+        return
     if args.command == "browse":
         from .browser import build_site
         report = build_site(args.start_year, args.end_year, model=args.model)

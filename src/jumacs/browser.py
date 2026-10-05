@@ -158,7 +158,7 @@ def _plot_annual(field, model, label, units, path):
                       "Annual cycle", "Month", path)
 
 
-def _html(records, start_year, end_year):
+def _html(records, start_year, end_year, inventory_rows):
     catalog = []
     for model, product, fields in records:
         for field in fields:
@@ -167,16 +167,18 @@ def _html(records, start_year, end_year):
                             "product": f"products/application/{model}/{product.name}",
                             "views": {name: path.as_posix() for name, path in field["views"].items()}})
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
+    inventory_payload = json.dumps(inventory_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
-            .replace("__CATALOG__", payload))
+            .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload))
 
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JuMACS · Application climatology atlas</title><link rel="stylesheet" href="assets/style.css"></head>
 <body><header><h1>JuMACS application climatology atlas</h1>
-<p>Model climatologies on the shared pressure grid · __PERIOD__</p></header>
-<main><aside><label for="model">Model / product</label><select id="model"></select>
+<p>Model climatologies on the shared pressure grid · __PERIOD__</p>
+<nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button></nav></header>
+<main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
 <label for="search">Variable</label><input id="search" type="search" placeholder="Search variable name">
 <div id="variables" aria-label="Available variables"></div></aside>
 <section class="viewer"><div class="topline"><div><h2 id="title"></h2><p class="meta" id="meta"></p></div>
@@ -195,9 +197,24 @@ Monthly time series: original monthly zonal data at the same four pressures;
 both line plots compare tropical, northern/southern midlatitude and northern/southern polar area means.
 The monthly series may span a longer source period than the application climatology and appear only where the source series exists.
 Some 1000 hPa curves are absent where source data do not reach that pressure. No missing values are filled.</p>
-</section></main><script id="catalog" type="application/json">__CATALOG__</script>
+</section></main><section id="inventory-view" hidden><h2>Data availability</h2>
+<p>Existing native and application climatologies. Pressure limits use any finite mean value.</p>
+<label for="inventory-search">Filter model or variable</label><input id="inventory-search" type="search" placeholder="Search inventory">
+<div class="table-wrap"><table><thead><tr>
+<th><button class="sort-button" data-sort="model">Model</button></th>
+<th><button class="sort-button" data-sort="canonical_variable">Variable</button></th>
+<th><button class="sort-button" data-sort="native_variable">Native name</button></th>
+<th><button class="sort-button" data-sort="dimensionality">2D/3D</button></th>
+<th><button class="sort-button" data-sort="units">Units</button></th>
+<th><button class="sort-button" data-sort="application_available">Application product</button></th>
+<th><button class="sort-button" data-sort="bottom_pressure_hpa">Vertical range (hPa)</button></th>
+<th><button class="sort-button" data-sort="waccmx_extended">WACCM-X extended</button></th>
+</tr></thead><tbody id="inventory-body"></tbody></table></div></section>
+<script id="catalog" type="application/json">__CATALOG__</script>
+<script id="inventory-data" type="application/json">__INVENTORY__</script>
 <script>
 const catalog = JSON.parse(document.getElementById('catalog').textContent);
+const inventory = JSON.parse(document.getElementById('inventory-data').textContent);
 const model = document.getElementById('model');
 const search = document.getElementById('search');
 const list = document.getElementById('variables');
@@ -258,6 +275,75 @@ document.onkeydown = event => {
   if (event.key === 'ArrowLeft') move(-1);
   if (event.key === 'ArrowRight') move(1);
 };
+const inventoryCollator = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+let inventorySort = null, inventoryDescending = false;
+function compareInventory(a, b, key) {
+  const left = a[key], right = b[key];
+  if (left == null) return right == null ? 0 : 1;
+  if (right == null) return -1;
+  if (typeof left === 'string') return inventoryCollator.compare(left, right);
+  return Number(left) - Number(right);
+}
+function renderInventory() {
+  const query = document.getElementById('inventory-search').value.toLowerCase();
+  const body = document.getElementById('inventory-body');
+  body.replaceChildren();
+  const rows = inventory.filter(row =>
+    (row.model + ' ' + (row.canonical_variable || '') + ' ' + row.native_variable)
+      .toLowerCase().includes(query));
+  rows.sort((a, b) => {
+    const primary = compareInventory(a, b, inventorySort);
+    if (primary) return a[inventorySort] == null || b[inventorySort] == null ? primary :
+      inventoryDescending ? -primary : primary;
+    return compareInventory(a, b, 'model') ||
+      compareInventory(a, b, 'canonical_variable') || compareInventory(a, b, 'native_variable');
+  });
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    const pressure = row.bottom_pressure_hpa == null ? '' :
+      `${row.bottom_pressure_hpa.toPrecision(3)}–${row.top_pressure_hpa.toPrecision(3)}`;
+    const values = [row.model, row.canonical_variable || '—', row.native_variable,
+      row.dimensionality || '—', row.units, null, pressure,
+      row.waccmx_extended == null ? 'unknown' : row.waccmx_extended ? 'yes' : 'no'];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      if (value === null && row.application_available && row.application_product) {
+        const link = document.createElement('a');
+        link.href = row.application_product;
+        link.textContent = 'NetCDF';
+        cell.append(link);
+      } else cell.textContent = value === null ? '—' : value;
+      tr.append(cell);
+    }
+    body.append(tr);
+  }
+}
+document.getElementById('inventory-search').oninput = renderInventory;
+for (const button of document.querySelectorAll('.sort-button')) {
+  const label = button.textContent;
+  button.onclick = () => {
+    inventoryDescending = inventorySort === button.dataset.sort && !inventoryDescending;
+    inventorySort = button.dataset.sort;
+    for (const heading of document.querySelectorAll('.sort-button')) {
+      const active = heading.dataset.sort === inventorySort;
+      heading.parentElement.setAttribute('aria-sort', active ?
+        inventoryDescending ? 'descending' : 'ascending' : 'none');
+      heading.textContent = heading.dataset.label + (active ? inventoryDescending ? ' ↓' : ' ↑' : '');
+    }
+    renderInventory();
+  };
+  button.dataset.label = label;
+}
+document.querySelector('.sort-button[data-sort="model"]').click();
+for (const [button, show] of [['atlas-nav', false], ['inventory-nav', true]]) {
+  document.getElementById(button).onclick = () => {
+    document.getElementById('atlas').hidden = show;
+    document.getElementById('inventory-view').hidden = !show;
+    document.getElementById('atlas-nav').classList.toggle('active', !show);
+    document.getElementById('inventory-nav').classList.toggle('active', show);
+  };
+}
+renderInventory();
 render();
 </script></body></html>
 """
@@ -267,7 +353,16 @@ STYLE = """:root{--ink:#183349;--muted:#617686;--line:#dce7ec;--paper:#f5f9fa;--
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
 header{background:#12364b;color:white;padding:1.2rem max(1.5rem,calc((100vw - 1420px)/2))}
 header h1{margin:0;font-size:1.6rem}header p{margin:.3rem 0 0;color:#cee2e9;font-size:.92rem}
+header nav{display:flex;gap:.5rem;margin-top:.7rem}header nav button.active{background:var(--accent);color:white}
 main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr)}
+main[hidden],#inventory-view[hidden]{display:none}
+#inventory-view{max-width:1420px;margin:auto;padding:1.5rem}
+#inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
+table{width:100%;border-collapse:collapse;background:white;font-size:.9rem}
+th,td{padding:.55rem .7rem;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{background:#e9f4f5;position:sticky;top:0}td a{color:#087f89}
+th button.sort-button{border:0;background:transparent;padding:0;color:inherit;font:inherit;font-weight:700;text-align:left;white-space:nowrap;cursor:pointer}
+th button.sort-button:hover,th button.sort-button:focus-visible{color:var(--accent);text-decoration:underline}
 aside{background:white;border-right:1px solid var(--line);padding:1.2rem}
 label{display:block;margin:.75rem 0 .3rem;color:var(--muted);font-size:.78rem;font-weight:750;text-transform:uppercase}
 select,input{width:100%;border:1px solid #b8cbd4;border-radius:.5rem;background:white;padding:.65rem .75rem;color:var(--ink);font:inherit}
@@ -297,6 +392,8 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None):
     start_year = period["start_year"] if start_year is None else start_year
     end_year = period["end_year"] if end_year is None else end_year
     products = discover_application_products(root, start_year, end_year, model)
+    from .inventory import build_inventory
+    inventory = build_inventory(start_year, end_year, model=model, root=root)
     site = root / "site"
     site.mkdir(parents=True, exist_ok=True)
     staging = site / ".browse-staging"
@@ -351,7 +448,16 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None):
         assets = staging / "assets"
         assets.mkdir()
         (assets / "style.css").write_text(STYLE, encoding="utf-8")
-        (staging / "index.html").write_text(_html(records, start_year, end_year), encoding="utf-8")
+        site_inventory = []
+        copied = {name for name, _, _ in records}
+        for row in inventory["rows"]:
+            entry = dict(row)
+            if row["model"] in copied and row["application_product"]:
+                entry["application_product"] = row["application_product"]
+            else:
+                entry["application_product"] = None
+            site_inventory.append(entry)
+        (staging / "index.html").write_text(_html(records, start_year, end_year, site_inventory), encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
             old = site / name
             if old.is_dir() and not old.is_symlink():
