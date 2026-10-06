@@ -78,7 +78,7 @@ def test_inventory_handles_missing_product_and_unknown_extension(tmp_path):
 def test_inventory_in_site_and_cli(tmp_path, monkeypatch, capsys):
     _products(tmp_path)
     monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
     site = browser.build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"]
     html = (site / "index.html").read_text()
     assert "Data availability" in html and 'id="inventory-search"' in html

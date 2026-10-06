@@ -15,7 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-from . import config, remap, vertical
+from . import config, coordinates, remap, vertical, zonal
+from .reader import open_source
 
 ZONAL_MONTHS = (1, 4, 7, 10)
 MONTH_NAMES = {1: "January", 4: "April", 7: "July", 10: "October"}
@@ -56,6 +57,129 @@ def _timeline_path(model, native_name):
     return Path("plots") / model / f"{safe_name}_timeline.png"
 
 
+def _map_path(model, native_name):
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", native_name)
+    return Path("plots") / model / f"{safe_name}_map.png"
+
+
+def _reference_year_source(root, model_config, native, year):
+    """Find an existing geographical Amon file covering the nominal year."""
+    folder = root / model_config["paths"]["raw"] / "Amon"
+    return _year_file(folder / native, native, year)
+
+
+def _year_file(folder, native, year):
+    for path in sorted(folder.glob(f"{native}_*.nc")):
+        match = re.search(r"_(\d{6})-(\d{6})\.nc$", path.name)
+        if match and match[1] <= f"{year}01" and match[2] >= f"{year}10":
+            return path
+    return None
+
+
+def _published_pressure(source, model, year, field):
+    """Read a separate geographical air-pressure field when hybrid terms are absent."""
+    path = _year_file(source.parent.parent / "pa", "pa", year)
+    if path is None:
+        raise ValueError("No reconstructable or published geographical pressure")
+    with open_source(path, model, "pa") as ds:
+        months = ds.time.dt.month.values
+        years = ds.time.dt.year.values
+        indices = [np.flatnonzero((years == year) & (months == month)) for month in ZONAL_MONTHS]
+        if any(len(found) != 1 for found in indices):
+            raise ValueError("Published pressure lacks a required example month")
+        pressure = ds["pa"].isel(time=[int(found[0]) for found in indices])
+        if (pressure.sizes.get(vertical.vertical_dimension(field)) != field.sizes[vertical.vertical_dimension(field)]
+                or not np.array_equal(pressure.time.values, field.time.values)):
+            raise ValueError("Published pressure grid or time differs from field")
+        for name in ("lat", "lon"):
+            if name in field.coords and name in pressure.coords and not np.array_equal(field[name], pressure[name]):
+                raise ValueError(f"Published pressure {name} differs from field")
+        return pressure.load()
+
+
+def _map_values(source, model, native, year):
+    """Read four geographical monthly fields; interpolate 3D fields to four pressures."""
+    model_config = config.load_config(model)
+    with open_source(source, model, native) as ds:
+        months = ds.time.dt.month.values
+        years = ds.time.dt.year.values
+        indices = [np.flatnonzero((years == year) & (months == month)) for month in ZONAL_MONTHS]
+        if any(len(found) != 1 for found in indices):
+            raise ValueError(f"Expected January/April/July/October {year} in {source.name}")
+        sample = ds.isel(time=[int(found[0]) for found in indices])
+        field = zonal.mask_near_fill(sample[native], model_config.get("near_fill_relative_tolerance"))
+        latitude = model_config["coordinates"]["latitude"]
+        longitude = model_config["coordinates"]["longitude"]
+        if (latitude not in field.dims or longitude not in field.dims or
+                field.sizes[longitude] < 2 or sample[latitude].ndim != 1 or sample[longitude].ndim != 1):
+            raise ValueError("No geographical latitude–longitude field")
+        extra = [dim for dim in field.dims if dim not in ("time", latitude, longitude)]
+        if len(extra) == 1 and field.sizes[extra[0]] == 1:
+            field = field.squeeze(extra[0], drop=True)
+            extra = []
+        if not extra:
+            values = field.transpose("time", latitude, longitude).values[:, None]
+            levels = None
+        elif len(extra) == 1:
+            pressure = vertical.native_pressure(sample, field)
+            if pressure is None:
+                try:
+                    pressure = coordinates.hybrid_pressure(sample, model_config)
+                except (KeyError, ValueError):
+                    pressure = _published_pressure(source, model, year, field)
+            values = vertical.interpolate_log_pressure(
+                field, pressure, np.asarray(PLOT_PRESSURES_HPA) * 100.0,
+                bridge_gaps=False).transpose("time", "pressure", latitude, longitude).values
+            levels = PLOT_PRESSURES_HPA
+        else:
+            raise ValueError("Field has more than one native vertical dimension")
+        latitudes = np.asarray(sample[latitude].values, dtype=float)
+        longitudes = np.asarray(sample[longitude].values, dtype=float)
+        units = str(field.attrs.get("units", ""))
+    lat_order = np.argsort(latitudes)
+    longitudes = (longitudes + 180.0) % 360.0 - 180.0
+    lon_order = np.argsort(longitudes)
+    values = values[:, :, lat_order, :][:, :, :, lon_order]
+    return values, latitudes[lat_order], longitudes[lon_order], levels, units
+
+
+def _plot_map(values, latitudes, longitudes, levels, model, label, units, year, path):
+    """Plot four source months on a latitude–longitude grid, one row per pressure."""
+    scale, units = _display_scale(values, units)
+    values = values * scale
+    rows = values.shape[1]
+    fig, axes = plt.subplots(rows, 4, figsize=(16, 3 * rows + 1.5),
+                             constrained_layout=True, squeeze=False)
+    has_data = False
+    for row, panels in enumerate(axes):
+        displayed = values[:, row]
+        finite = displayed[np.isfinite(displayed)]
+        if finite.size:
+            has_data = True
+            low, high = float(finite.min()), float(finite.max())
+            if low == high:
+                width = max(abs(low) * 0.01, 1e-12)
+                low, high = low - width, high + width
+        for ax, month, panel in zip(panels, ZONAL_MONTHS, displayed):
+            ax.set(title=MONTH_NAMES[month], xlim=(-180, 180), ylim=(-90, 90))
+            if finite.size:
+                image = ax.pcolormesh(longitudes, latitudes, np.ma.masked_invalid(panel),
+                                      shading="auto", cmap="viridis", vmin=low, vmax=high,
+                                      rasterized=True)
+            else:
+                ax.text(0.5, 0.5, "No native data", ha="center", va="center", transform=ax.transAxes)
+            if row == rows - 1:
+                ax.set_xlabel("Longitude (°E)")
+        panels[0].set_ylabel("Latitude (°N)" + (f"\n{levels[row]:g} hPa" if levels else ""))
+        if finite.size:
+            fig.colorbar(image, ax=panels, label=units or "Value", shrink=0.85)
+    fig.suptitle(f"{model} · {label} · geographical monthly fields ({year}; single year)")
+    if has_data:
+        fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return has_data
+
+
 def _band_samples(field, pressure, latitudes):
     """Sample exact pressures per column, then average over five spherical-area bands."""
     sampled = vertical.interpolate_log_pressure(
@@ -74,8 +198,11 @@ def _height_to_pressure(height_km):
     return 1000.0 * np.exp(-np.asarray(height_km) / 7.0)
 
 
-def _plot_band_series(samples, x, model, label, units, title, xlabel, destination):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True, constrained_layout=True)
+def _plot_band_series(samples, x, model, label, units, title, xlabel, destination, *, timeline=False):
+    rows, columns = (4, 1) if timeline else (2, 2)
+    figsize = (13, 10) if timeline else (12, 8)
+    fig, axes = plt.subplots(rows, columns, figsize=figsize, sharex=True,
+                             constrained_layout=True, squeeze=False)
     colors = ("#2b8cbe", "#f28e2b", "#4a9d65", "#9467bd", "#c64b5d")
     for level, (pressure, ax) in enumerate(zip(PLOT_PRESSURES_HPA, axes.flat)):
         for band, (name, color) in enumerate(zip(PLOT_LATITUDE_NAMES, colors)):
@@ -84,7 +211,7 @@ def _plot_band_series(samples, x, model, label, units, title, xlabel, destinatio
         ax.grid(alpha=0.2)
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.06), ncol=3)
-    for ax in axes[1, :]:
+    for ax in axes[-1, :]:
         ax.set_xlabel(xlabel)
     if xlabel == "Month":
         for ax in axes.flat:
@@ -93,6 +220,20 @@ def _plot_band_series(samples, x, model, label, units, title, xlabel, destinatio
     fig.suptitle(f"{model} · {label} · {title}")
     fig.savefig(destination, dpi=120, bbox_inches="tight")
     plt.close(fig)
+
+
+def _display_scale(values, units):
+    """Choose readable plot units without changing the stored product units."""
+    if units in ("mol mol-1", "mol/mol"):
+        finite = np.abs(values[np.isfinite(values)])
+        peak = float(np.percentile(finite, 98)) if finite.size else 0.0
+        return ((1e6, "ppmv") if peak >= 1e-6 else (1e9, "ppbv") if peak >= 1e-9
+                else (1e12, "pptv") if peak >= 1e-12 else (1e15, "ppqv"))
+    if units == "Pa":
+        return 0.01, "hPa"
+    if units == "m":
+        return 0.001, "km"
+    return 1.0, units
 
 
 def _plot_timeline(source, native, model, label, destination):
@@ -106,19 +247,12 @@ def _plot_timeline(source, native, model, label, destination):
         years = ds.time.dt.year.values
         months = ds.time.dt.month.values
         units = field.attrs.get("units", "")
-    if units in ("mol mol-1", "mol/mol"):
-        finite = np.abs(samples[np.isfinite(samples)])
-        peak = float(np.percentile(finite, 98)) if finite.size else 0.0
-        power, units = ((6, "ppmv") if peak >= 1e-6 else (9, "ppbv") if peak >= 1e-9
-                        else (12, "pptv") if peak >= 1e-12 else (15, "ppqv"))
-        samples = samples * 10 ** power
-    elif units == "Pa":
-        samples, units = samples / 100.0, "hPa"
-    elif units == "m":
-        samples, units = samples / 1000.0, "km"
+    scale, units = _display_scale(samples, units)
+    samples = samples * scale
     x = years + (months - 0.5) / 12
     _plot_band_series(samples, x, model, label, units,
-                      f"monthly zonal means {years.min()}–{years.max()}", "Year", destination)
+                      f"monthly zonal means {years.min()}–{years.max()}", "Year", destination,
+                      timeline=True)
     return True
 
 
@@ -154,8 +288,8 @@ def _plot_zonal(values, pressure_hpa, latitudes, model, label, units, path):
     plt.close(fig)
 
 
-def _plot_annual(field, model, label, units, path):
-    samples = _band_samples(field, field.pressure, field.lat.values)
+def _plot_annual(field, model, label, units, path, *, scale=1.0):
+    samples = _band_samples(field, field.pressure, field.lat.values) * scale
     _plot_band_series(samples, np.arange(1, 13), model, label, units,
                       "Annual cycle", "Month", path)
 
@@ -170,14 +304,16 @@ def _html(records, start_year, end_year, inventory_rows):
                             "views": {name: path.as_posix() for name, path in field["views"].items()}})
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     inventory_payload = json.dumps(inventory_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
+    year = config.reference_period()["reference_period"]["nominal_reference_year"]
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
+            .replace("__MAP_YEAR__", str(year))
             .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload))
 
 
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JuMACS · Application climatology atlas</title><link rel="stylesheet" href="assets/style.css"></head>
-<body><header><h1>JuMACS application climatology atlas</h1>
+<title>JuMACS · Climatology atlas</title><link rel="stylesheet" href="assets/style.css"></head>
+<body><header><h1>JuMACS climatology atlas</h1>
 <p>Model climatologies on the shared pressure grid · __PERIOD__</p>
 <nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
@@ -188,7 +324,8 @@ HTML_TEMPLATE = """<!doctype html>
 <button id="next" title="Next variable">Next →</button></div></div>
 <div class="controls tabs"><button class="tab active" data-view="zonal">Four cross sections</button>
 <button class="tab" data-view="timeline">Monthly time series</button>
-<button class="tab" data-view="annual">Annual cycle</button></div>
+<button class="tab" data-view="annual">Annual cycle</button>
+<button class="tab" data-view="map">Global maps</button></div>
 <figure><img id="plot" alt=""><figcaption><span id="caption"></span>
 <span><a class="download" id="png" download>Download PNG</a>
 <a class="download" id="product" download>Download NetCDF</a></span></figcaption></figure>
@@ -199,6 +336,9 @@ Monthly time series: original monthly zonal data at the same four pressures;
 both line plots compare tropical, northern/southern midlatitude and northern/southern polar area means.
 The monthly series may span a longer source period than the application climatology and appear only where the source series exists.
 Some 1000 hPa curves are absent where source data do not reach that pressure. No missing values are filled.</p>
+<p class="note">Global maps show geographical monthly fields from the single example year __MAP_YEAR__
+at 1000, 100, 10 and 1 hPa where native pressure permits, or four surface maps for 2D fields.
+These maps are not 1985–2014 climatological means.</p>
 </section></main><section id="inventory-view" hidden><h2>Data availability</h2>
 <p>Existing native and application climatologies. Pressure limits use any finite mean value.</p>
 <label for="inventory-search">Filter model or variable</label><input id="inventory-search" type="search" placeholder="Search inventory">
@@ -246,7 +386,7 @@ function render() {
     document.getElementById('plot').removeAttribute('src');
     return;
   }
-  if (!current.views[view]) view = 'zonal';
+  if (!current.views[view]) view = current.views.zonal ? 'zonal' : Object.keys(current.views)[0];
   document.getElementById('title').textContent = current.model + ' · ' + current.label;
   document.getElementById('meta').textContent = current.variable + ' · ' + current.units + ' · __PERIOD__';
   const image = document.getElementById('plot');
@@ -256,7 +396,8 @@ function render() {
   document.getElementById('product').href = current.product;
   document.getElementById('caption').textContent = {
     zonal: 'Monthly climatology · four latitude–pressure sections',
-    timeline: 'Original monthly zonal time series', annual: 'Twelve-month climatological annual cycle'
+    timeline: 'Original monthly zonal time series', annual: 'Twelve-month climatological annual cycle',
+    map: 'Geographical monthly fields from __MAP_YEAR__ (single year)'
   }[view];
   for (const tab of document.querySelectorAll('.tab')) {
     tab.disabled = !current.views[tab.dataset.view];
@@ -398,7 +539,9 @@ def _render_model(model_name, product, root, staging):
     fields = []
     skipped = []
     timeline_skipped = []
+    map_skipped = []
     model_config = config.load_config(model_name)
+    map_year = config.reference_period()["reference_period"]["nominal_reference_year"]
     mapping = {native: canonical for canonical, native in model_config["variables"].items()}
     with xr.open_dataset(product) as dataset:
         pressure_hpa = np.asarray(dataset.pressure.values, dtype=float) / 100.0
@@ -407,38 +550,63 @@ def _render_model(model_name, product, root, staging):
             if not name.endswith("_mean"):
                 continue
             field = dataset[name]
-            if field.dims != ("time", "pressure", "lat") or field.sizes["time"] != 12:
-                skipped.append((model_name, name, "not a 12-month time×pressure×lat field"))
+            three_dimensional = field.dims == ("time", "pressure", "lat")
+            two_dimensional = field.dims == ("time", "lat")
+            if field.sizes.get("time") != 12 or not (three_dimensional or two_dimensional):
+                skipped.append((model_name, name, "not a 12-month time×pressure×lat or time×lat field"))
                 continue
             native = name[:-5]
-            values = np.asarray(field.values)
-            if not np.isfinite(values[np.array(ZONAL_MONTHS) - 1]).any():
-                skipped.append((model_name, name, "no finite values in displayed months"))
-                continue
-            paths = _plot_paths(model_name, native)
-            for path in paths:
-                (staging / path).parent.mkdir(parents=True, exist_ok=True)
             canonical = mapping.get(native, native)
             label = canonical.replace("_", " ")
             units = str(field.attrs.get("units", ""))
-            _plot_zonal(values, pressure_hpa, latitudes, model_name, label, units, staging / paths[0])
-            _plot_annual(field, model_name, label, units, staging / paths[1])
-            views = {"zonal": paths[0], "annual": paths[1]}
-            source = root / model_config["paths"]["zonal"] / f"{native}_monthly_zonal.nc"
-            if source.is_file():
-                timeline = _timeline_path(model_name, native)
-                if _plot_timeline(source, native, model_name, label, staging / timeline):
-                    views["timeline"] = timeline
+            views = {}
+            if three_dimensional:
+                values = np.asarray(field.values)
+                if not np.isfinite(values[np.array(ZONAL_MONTHS) - 1]).any():
+                    skipped.append((model_name, name, "no finite values in displayed months"))
+                    continue
+                paths = _plot_paths(model_name, native)
+                for path in paths:
+                    (staging / path).parent.mkdir(parents=True, exist_ok=True)
+                scale, plot_units = _display_scale(values, units)
+                _plot_zonal(values * scale, pressure_hpa, latitudes, model_name, label,
+                            plot_units, staging / paths[0])
+                _plot_annual(field, model_name, label, plot_units, staging / paths[1], scale=scale)
+                views = {"zonal": paths[0], "annual": paths[1]}
+                source = root / model_config["paths"]["zonal"] / f"{native}_monthly_zonal.nc"
+                if source.is_file():
+                    timeline = _timeline_path(model_name, native)
+                    if _plot_timeline(source, native, model_name, label, staging / timeline):
+                        views["timeline"] = timeline
+                    else:
+                        timeline_skipped.append((model_name, native, "no usable native pressure profile"))
                 else:
-                    timeline_skipped.append((model_name, native, "no usable native pressure profile"))
+                    timeline_skipped.append((model_name, native, "monthly zonal source missing"))
+            map_source = _reference_year_source(root, model_config, native, map_year)
+            if map_source is None:
+                map_skipped.append((model_name, native, f"no Amon source covering {map_year}"))
             else:
-                timeline_skipped.append((model_name, native, "monthly zonal source missing"))
+                try:
+                    map_values, map_lat, map_lon, map_levels, map_units = _map_values(
+                        map_source, model_name, native, map_year)
+                    map_path = _map_path(model_name, native)
+                    (staging / map_path).parent.mkdir(parents=True, exist_ok=True)
+                    if _plot_map(map_values, map_lat, map_lon, map_levels, model_name,
+                                 label, map_units, map_year, staging / map_path):
+                        views["map"] = map_path
+                    else:
+                        map_skipped.append((model_name, native, "no finite map values"))
+                except (KeyError, ValueError) as exc:
+                    map_skipped.append((model_name, native, str(exc)))
+            if not views:
+                skipped.append((model_name, name, "no geographical source for 2D field"))
+                continue
             fields.append({"native": native, "canonical": canonical, "label": label,
                            "units": units, "views": views})
     copy = staging / "products" / "application" / model_name / product.name
     copy.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(product, copy)
-    return (model_name, product, fields), skipped, timeline_skipped
+    return (model_name, product, fields), skipped, timeline_skipped, map_skipped
 
 
 def build_site(start_year=None, end_year=None, *, model=None, root=None, workers=4):
@@ -461,6 +629,7 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
     records = []
     skipped = []
     timeline_skipped = []
+    map_skipped = []
     try:
         tasks = [(name, product, root, staging) for name, product in products]
         if workers == 1 or len(tasks) == 1:
@@ -469,10 +638,11 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             with ProcessPoolExecutor(max_workers=min(workers, len(tasks)),
                                      mp_context=get_context("spawn")) as pool:
                 results = list(pool.map(_render_model, *zip(*tasks)))
-        for record, model_skipped, model_timeline_skipped in results:
+        for record, model_skipped, model_timeline_skipped, model_map_skipped in results:
             records.append(record)
             skipped.extend(model_skipped)
             timeline_skipped.extend(model_timeline_skipped)
+            map_skipped.extend(model_map_skipped)
         assets = staging / "assets"
         assets.mkdir()
         (assets / "style.css").write_text(STYLE, encoding="utf-8")
@@ -508,4 +678,4 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             "variables": {name: len(fields) for name, _, fields in records},
             "png_files": sum(len(field["views"]) for _, _, fields in records for field in fields),
             "netcdf_files": len(records), "skipped": skipped,
-            "timeline_skipped": timeline_skipped}
+            "timeline_skipped": timeline_skipped, "map_skipped": map_skipped}

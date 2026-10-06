@@ -8,14 +8,19 @@ from .reader import open_source, source_files
 from .vertical import pressure_report
 
 
-def zonal_mean(ds, variable, longitude="lon", source_kind=None, near_fill_relative_tolerance=None):
-    data = ds[variable]
+def mask_near_fill(data, near_fill_relative_tolerance=None):
+    """Mask archived values close to a declared fill marker before processing."""
     if near_fill_relative_tolerance:
         marker = data.encoding.get("_FillValue", data.encoding.get("missing_value"))
         if marker is not None:
             attrs = dict(data.attrs)
             data = data.where(~np.isclose(data, marker, rtol=near_fill_relative_tolerance, atol=0.0))
             data.attrs = attrs
+    return data
+
+
+def zonal_mean(ds, variable, longitude="lon", source_kind=None, near_fill_relative_tolerance=None):
+    data = mask_near_fill(ds[variable], near_fill_relative_tolerance)
     if longitude in data.dims:
         if data.sizes[longitude] == 1:
             data = data.isel({longitude: 0}, drop=True)
