@@ -12,7 +12,8 @@ from jumacs.application import build_application_product
 from jumacs.build import build_model, configured_variables
 from jumacs.config import load_config
 from jumacs.download import select_files
-from jumacs.reader import source_files
+from jumacs.reader import open_source, source_files
+from jumacs.zonal import zonal_mean
 
 MODELS = ("IPSL-CM6A-ATM-LR-REPROBUS", "CCSR-NIES-MIROC32", "NIWA-UKCA2")
 
@@ -98,3 +99,23 @@ def test_niwa_mismatched_ep_flux_latitudes_are_excluded_from_default_build():
     config = load_config("NIWA-UKCA2")
     assert {"epfy", "epfz", "c2h6"}.isdisjoint(configured_variables("NIWA-UKCA2", config))
     assert config["variables"]["EP_flux_meridional"] == "epfy"
+
+
+def test_ccsr_near_fill_values_are_missing_before_longitude_mean(tmp_path):
+    model = "CCSR-NIES-MIROC32"
+    marker = np.float32(1e20)
+    near_marker = np.nextafter(marker, np.float32(0))
+    values = np.array([[[[near_marker, 220.], [near_marker, near_marker]],
+                        [[230., 250.], [240., 260.]]]], dtype="float32")
+    ds = xr.Dataset({"ta": (("time", "lev", "lat", "lon"), values, {"units": "K"})},
+                    coords={"time": xr.date_range("1985-01", periods=1, use_cftime=True),
+                            "lev": ("lev", [100000., 10000.], {"units": "Pa"}),
+                            "lat": [-30., 30.], "lon": [0., 180.]})
+    path = _raw_file(tmp_path, model, "Amon", "ta", ds)
+    ds.to_netcdf(path, encoding={"ta": {"_FillValue": marker}})
+    with open_source(path, model, "temperature") as source:
+        assert np.isfinite(source.ta.isel(time=0, lev=0, lat=0, lon=0).item())
+        out = zonal_mean(source, "ta", near_fill_relative_tolerance=load_config(model)["near_fill_relative_tolerance"])
+        np.testing.assert_allclose(out.isel(time=0, lev=0, lat=0).item(), 220.)
+        assert np.isnan(out.isel(time=0, lev=0, lat=1).item())
+        np.testing.assert_allclose(out.isel(time=0, lev=1).values, [240., 250.])

@@ -22,6 +22,8 @@ capabilities:
 paths: {raw: data/raw/CCSR-NIES-MIROC32/refD1, zonal: data/processed/CCSR-NIES-MIROC32/refD1, climatology: products/climatology/CCSR-NIES-MIROC32}
 coordinates: {latitude: lat, longitude: lon, level: lev, pressure: lev}
 squeeze_singleton_level: true # Amon surface/column fields carry a spurious lev=1 axis.
+# Archived values one float32 step below the declared 1e20 fill marker escape exact CF masking.
+near_fill_relative_tolerance: 0.000001
 variables:
   Br: br
   BrCl: brcl

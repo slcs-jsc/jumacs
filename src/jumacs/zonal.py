@@ -8,8 +8,14 @@ from .reader import open_source, source_files
 from .vertical import pressure_report
 
 
-def zonal_mean(ds, variable, longitude="lon", source_kind=None):
+def zonal_mean(ds, variable, longitude="lon", source_kind=None, near_fill_relative_tolerance=None):
     data = ds[variable]
+    if near_fill_relative_tolerance:
+        marker = data.encoding.get("_FillValue", data.encoding.get("missing_value"))
+        if marker is not None:
+            attrs = dict(data.attrs)
+            data = data.where(~np.isclose(data, marker, rtol=near_fill_relative_tolerance, atol=0.0))
+            data.attrs = attrs
     if longitude in data.dims:
         if data.sizes[longitude] == 1:
             data = data.isel({longitude: 0}, drop=True)
@@ -53,7 +59,8 @@ def zonal_smoke(model, variable):
     with open_source(files[0], model, name) as ds:
         sample = ds.isel(time=slice(0, 1))
         lon_name = coords["longitude"]
-        arr = zonal_mean(sample, name, lon_name, config["model"].get("source_kind")).load()
+        arr = zonal_mean(sample, name, lon_name, config["model"].get("source_kind"),
+                         config.get("near_fill_relative_tolerance")).load()
         out = arr.to_dataset(name=name)
         finite = float(np.isfinite(arr.values).mean())
         report["zonal_dims"] = {d: int(s) for d, s in arr.sizes.items()}
@@ -122,7 +129,8 @@ def build_zonal(model, variable):
             # Limit the largest in-memory full field to 12 monthly samples.
             for start in range(0, ds.sizes["time"], 12):
                 chunk = ds.isel(time=slice(start, start + 12))
-                arr = zonal_mean(chunk, name, lon_name, config["model"].get("source_kind")).load()
+                arr = zonal_mean(chunk, name, lon_name, config["model"].get("source_kind"),
+                                 config.get("near_fill_relative_tolerance")).load()
                 if config.get("squeeze_singleton_level") and arr.sizes.get(config["coordinates"]["level"]) == 1:
                     arr = arr.squeeze(config["coordinates"]["level"], drop=True)
                 current = (tuple((dim, arr.sizes[dim]) for dim in arr.dims if dim != "time"),
