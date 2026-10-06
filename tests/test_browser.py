@@ -315,6 +315,11 @@ def test_surface_pressure_appears_as_map_only_view(tmp_path, monkeypatch):
     surface = next(row for row in catalog if row["variable"] == "ps")
     assert surface["views"] == {"map": "plots/SOCOL/ps_map.png"}
     assert (site / surface["views"]["map"]).is_file()
+    inventory = json.loads(re.search(r'<script id="inventory-data" type="application/json">(.*?)</script>',
+                                     html, re.DOTALL).group(1))
+    pressure = next(row for row in inventory if row["native_variable"] == "ps")
+    assert pressure["map_plot"] == surface["views"]["map"]
+    assert not Path(pressure["map_plot"]).is_absolute()
 
 
 def test_browse_cli(monkeypatch, capsys):

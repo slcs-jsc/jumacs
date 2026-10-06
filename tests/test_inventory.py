@@ -82,12 +82,18 @@ def test_inventory_in_site_and_cli(tmp_path, monkeypatch, capsys):
     site = browser.build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"]
     html = (site / "index.html").read_text()
     assert "Data availability" in html and 'id="inventory-search"' in html
+    assert "Climatology grid" in html and "Global map" in html
+    assert "zonal: pressure × latitude" in html and "zonal: latitude only" in html
+    assert "2D/3D</button>" not in html
+    assert "Click a column heading to sort (↕)" in html
+    assert "inventoryDescending ? ' ↓' : ' ↑' : ' ↕'" in html
     assert 'data-sort="model"' in html and 'data-sort="canonical_variable"' in html
     assert "aria-sort" in html and "inventoryDescending" in html
     rows = json.loads(re.search(r'<script id="inventory-data" type="application/json">(.*?)</script>',
                                html, re.DOTALL).group(1))
     ta = next(row for row in rows if row["canonical_variable"] == "temperature")
     assert ta["native_variable"] == "ta"
+    assert ta["dimensionality"] == "3D" and ta["map_plot"] is None
     link = ta["application_product"]
     assert link == "products/application/SOCOL/jumacs_socol_application_climatology_1985-2014.nc"
     assert (site / link).is_file()

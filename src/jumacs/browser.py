@@ -340,15 +340,18 @@ Some 1000 hPa curves are absent where source data do not reach that pressure. No
 at 1000, 100, 10 and 1 hPa where native pressure permits, or four surface maps for 2D fields.
 These maps are not 1985–2014 climatological means.</p>
 </section></main><section id="inventory-view" hidden><h2>Data availability</h2>
-<p>Existing native and application climatologies. Pressure limits use any finite mean value.</p>
+<p>Application climatologies are zonal means: their spatial axes are pressure × latitude or latitude only.
+Global maps are separate longitude-resolved fields from the example year __MAP_YEAR__ where available.
+Pressure limits use any finite mean value. Click a column heading to sort (↕); ↑ and ↓ show the current order.</p>
 <label for="inventory-search">Filter model or variable</label><input id="inventory-search" type="search" placeholder="Search inventory">
 <div class="table-wrap"><table><thead><tr>
 <th><button class="sort-button" data-sort="model">Model</button></th>
 <th><button class="sort-button" data-sort="canonical_variable">Variable</button></th>
 <th><button class="sort-button" data-sort="native_variable">Native name</button></th>
-<th><button class="sort-button" data-sort="dimensionality">2D/3D</button></th>
+<th><button class="sort-button" data-sort="dimensionality">Climatology grid</button></th>
 <th><button class="sort-button" data-sort="units">Units</button></th>
 <th><button class="sort-button" data-sort="application_available">Application product</button></th>
+<th><button class="sort-button" data-sort="map_plot">Global map</button></th>
 <th><button class="sort-button" data-sort="bottom_pressure_hpa">Vertical range (hPa)</button></th>
 <th><button class="sort-button" data-sort="waccmx_extended">WACCM-X extended</button></th>
 </tr></thead><tbody id="inventory-body"></tbody></table></div></section>
@@ -451,15 +454,22 @@ function renderInventory() {
     const tr = document.createElement('tr');
     const pressure = row.bottom_pressure_hpa == null ? '' :
       `${row.bottom_pressure_hpa.toPrecision(3)}–${row.top_pressure_hpa.toPrecision(3)}`;
+    const grid = row.dimensionality === '3D' ? 'zonal: pressure × latitude' :
+      row.dimensionality === '2D' ? 'zonal: latitude only' : '—';
     const values = [row.model, row.canonical_variable || '—', row.native_variable,
-      row.dimensionality || '—', row.units, null, pressure,
+      grid, row.units, null, null, pressure,
       row.waccmx_extended == null ? 'unknown' : row.waccmx_extended ? 'yes' : 'no'];
-    for (const value of values) {
+    for (const [index, value] of values.entries()) {
       const cell = document.createElement('td');
-      if (value === null && row.application_available && row.application_product) {
+      if (index === 5 && row.application_available && row.application_product) {
         const link = document.createElement('a');
         link.href = row.application_product;
         link.textContent = 'NetCDF';
+        cell.append(link);
+      } else if (index === 6 && row.map_plot) {
+        const link = document.createElement('a');
+        link.href = row.map_plot;
+        link.textContent = 'View PNG';
         cell.append(link);
       } else cell.textContent = value === null ? '—' : value;
       tr.append(cell);
@@ -477,11 +487,15 @@ for (const button of document.querySelectorAll('.sort-button')) {
       const active = heading.dataset.sort === inventorySort;
       heading.parentElement.setAttribute('aria-sort', active ?
         inventoryDescending ? 'descending' : 'ascending' : 'none');
-      heading.textContent = heading.dataset.label + (active ? inventoryDescending ? ' ↓' : ' ↑' : '');
+      const direction = active ? inventoryDescending ? 'descending' : 'ascending' : 'sortable';
+      heading.textContent = heading.dataset.label + (active ? inventoryDescending ? ' ↓' : ' ↑' : ' ↕');
+      heading.setAttribute('aria-label', heading.dataset.label + ', ' + direction);
     }
     renderInventory();
   };
   button.dataset.label = label;
+  button.textContent = label + ' ↕';
+  button.setAttribute('aria-label', label + ', sortable');
 }
 document.querySelector('.sort-button[data-sort="model"]').click();
 for (const [button, show] of [['atlas-nav', false], ['inventory-nav', true]]) {
@@ -648,12 +662,15 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
         (assets / "style.css").write_text(STYLE, encoding="utf-8")
         site_inventory = []
         copied = {name for name, _, _ in records}
+        maps = {(name, field["native"]): field["views"]["map"].as_posix()
+                for name, _, fields in records for field in fields if "map" in field["views"]}
         for row in inventory["rows"]:
             entry = dict(row)
             if row["model"] in copied and row["application_product"]:
                 entry["application_product"] = row["application_product"]
             else:
                 entry["application_product"] = None
+            entry["map_plot"] = maps.get((row["model"], row["native_variable"]))
             site_inventory.append(entry)
         (staging / "index.html").write_text(_html(records, start_year, end_year, site_inventory), encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
