@@ -259,8 +259,8 @@ def remap_field(ds, name, levels, weights, band_centers, width_degrees=BAND_WIDT
         moved = field.astype("float64")
     else:
         raise ValueError(f"{name} must be two- or three-dimensional, found {field.dims}")
-    remapped = area_weighted_bands(moved, weights, band_centers).assign_attrs(
-        _field_attributes(field, moved, width_degrees), overwrite=True)
+    remapped = area_weighted_bands(moved, weights, band_centers)
+    remapped.attrs = _field_attributes(field, moved, width_degrees)
     return remapped.astype("float32")
 
 
