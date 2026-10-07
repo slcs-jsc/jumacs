@@ -116,9 +116,9 @@ def test_build_model_processes_every_configured_variable_and_keeps_them_all(tmp_
     assert combined["climatology_bounds"].dims == ("time", "nv")
     assert "source_units" not in combined["o3_n_years"].attrs
     assert set(combined["o3_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable",
-                                                "pressure_field"}
+                                                "pressure_field", "latitude_axis"}
     assert set(combined["h2o_n_years"].attrs) == {"units", "long_name", "cell_methods", "source_variable",
-                                                 "pressure_coordinate"}
+                                                     "pressure_coordinate", "latitude_axis"}
     combined.close()
 
 

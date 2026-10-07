@@ -9,6 +9,7 @@ import xarray as xr
 
 from . import config
 from .climatology import product_name
+from .vertical import is_latitude_dimension
 
 FIELDS = ("model", "canonical_variable", "native_variable", "long_name", "units",
           "dimensionality", "native_product", "application_product", "native_available",
@@ -28,9 +29,9 @@ def _fields(path, skipped):
             field = dataset[name]
             native = name[:-5]
             dimensions = field.dims
-            if dimensions == ("time", "lat"):
+            if len(dimensions) == 2 and dimensions[0] == "time" and is_latitude_dimension(dimensions[1]):
                 dimensionality = "2D"
-            elif len(dimensions) == 3 and dimensions[0] == "time" and dimensions[-1] == "lat":
+            elif len(dimensions) == 3 and dimensions[0] == "time" and is_latitude_dimension(dimensions[2]):
                 dimensionality = "3D"
             else:
                 skipped.append({"product": str(path), "field": name,
@@ -41,7 +42,8 @@ def _fields(path, skipped):
                     "dimensionality": dimensionality, "waccmx_extended": None,
                     "bottom_pressure_hpa": None, "top_pressure_hpa": None,
                     "finite_fraction": None}
-            if "pressure" in dimensions and dimensions == ("time", "pressure", "lat"):
+            if "pressure" in dimensions and len(dimensions) == 3 and dimensions[:2] == ("time", "pressure") \
+                    and is_latitude_dimension(dimensions[2]):
                 values = np.asarray(field.values)
                 finite = np.isfinite(values)
                 levels = np.flatnonzero(finite.any(axis=(0, 2)))

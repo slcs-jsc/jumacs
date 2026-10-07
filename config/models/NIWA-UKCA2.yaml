@@ -20,9 +20,9 @@ capabilities:
   compact_waccmx: false
 paths: {raw: data/raw/NIWA-UKCA2/refD1, zonal: data/processed/NIWA-UKCA2/refD1, climatology: products/climatology/NIWA-UKCA2}
 coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
-# EP fluxes use a 72-point latitude axis instead of the shared 73-point axis.
+# EP fluxes use a 72-point latitude axis; they join the product on its own grid (lat_2), like extra level grids.
 # c2h6 exists only on Amon hybrid-height levels; its pressure needs the separate pa field.
-exclude_from_climatology: [epfy, epfz, c2h6]
+exclude_from_climatology: [c2h6]
 variables:
   Br: br
   BrCl: brcl

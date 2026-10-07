@@ -16,6 +16,8 @@ import datetime as dt
 import re
 import numpy as np
 
+from .vertical import is_latitude_dimension
+
 CONVENTIONS = "CF-1.13"
 BOUNDS_DIMENSION = "nv"
 STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum", "n_years")
@@ -241,11 +243,11 @@ def _validate_common(ds, names, statistics):
             problems.append("time needs units and calendar")
     if "lat" not in ds.coords:
         problems.append("lat is missing")
-    else:
-        if ds["lat"].dtype != np.float64:
-            problems.append(f"lat must be float64, found {ds['lat'].dtype}")
-        if ds["lat"].attrs.get("units") != "degrees_north":
-            problems.append("lat must be degrees_north")
+    for coordinate in sorted(dim for dim in ds.coords if is_latitude_dimension(dim)):
+        if ds[coordinate].dtype != np.float64:
+            problems.append(f"{coordinate} must be float64, found {ds[coordinate].dtype}")
+        if ds[coordinate].attrs.get("units") != "degrees_north":
+            problems.append(f"{coordinate} must be degrees_north")
     expected = _statistic_fields(names, statistics)
     present = set(ds.data_vars)
     for missing in sorted(expected - present):
@@ -270,8 +272,9 @@ def _validate_common(ds, names, statistics):
                 problems.append(f"{field} carries an unrecognised standard_name {standard_name!r}")
             if variable.ndim not in (2, 3):
                 problems.append(f"{field} must be two- or three-dimensional, found {variable.ndim}")
-            elif list(variable.dims)[:1] != ["time"] or variable.dims[-1] != "lat":
-                problems.append(f"{field} must start with time and end with lat, found {list(variable.dims)}")
+            elif list(variable.dims)[:1] != ["time"] or not is_latitude_dimension(variable.dims[-1]):
+                problems.append(f"{field} must start with time and end with a latitude dimension, found "
+                                f"{list(variable.dims)}")
     return problems
 
 
@@ -292,7 +295,7 @@ def _validate_native_vertical(ds, names, statistics, grid=None):
             problems.append(f"{name} must be air_pressure in Pa")
         if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
             problems.append(f"{name} must carry positive=down and axis=Z")
-        if list(pressure.dims)[:1] != ["time"] or pressure.dims[-1] != "lat" or pressure.ndim != 3:
+        if list(pressure.dims)[:1] != ["time"] or not is_latitude_dimension(pressure.dims[-1]) or pressure.ndim != 3:
             problems.append(f"{name} must be ordered (time, <native level>, lat), found {list(pressure.dims)}")
     published = {str(ds[field].attrs.get("pressure_field", "")).strip() for field in statistics_fields}
     for name in _pressure_fields(ds):
@@ -303,7 +306,7 @@ def _validate_native_vertical(ds, names, statistics, grid=None):
         if variable.ndim != 3:
             continue
         level = variable.dims[1]
-        if level == "time" or level == "lat":
+        if level == "time" or is_latitude_dimension(level):
             problems.append(f"{field} has no vertical dimension: {list(variable.dims)}")
             continue
         named = str(variable.attrs.get("pressure_field", "")).strip()

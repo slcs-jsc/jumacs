@@ -54,7 +54,7 @@ REMAP_COMMENT = ("remapped onto the shared pressure grid and fixed latitude band
 # name prefixed with 'native_' while the canonical name describes the grid the remap put
 # the fields on.
 NATIVE_ATTRIBUTES = ("horizontal_grid", "vertical_coordinate", "vertical_level_count", "vertical_level_counts",
-                     "latitude_count", "missing_value_policy", "application_pressure_grid",
+                     "latitude_count", "latitude_counts", "missing_value_policy", "application_pressure_grid",
                      "application_latitude_bands")
 
 
@@ -219,7 +219,7 @@ def _field_attributes(source, remapped, width_degrees):
     attributes on its way through, so they are taken from the field as published.
     """
     attrs = dict(source.attrs)
-    for stale in ("pressure_field", "pressure_coordinate"):
+    for stale in ("pressure_field", "pressure_coordinate", "latitude_axis"):
         attrs.pop(stale, None)
     attrs["horizontal_remapping"] = HORIZONTAL_REMAPPING
     attrs["latitude_band_width_degrees"] = float(width_degrees)
@@ -277,20 +277,33 @@ def remap_product(ds, names=(), statistics=REMAP_STATISTICS, levels=None, width_
     statistics nor published pressures and that still carry a latitude dimension are
     refused too, because there is no rule here for remapping them.
     """
-    if "lat" not in ds.coords:
+    axes = sorted(dim for dim in ds.coords if vertical.is_latitude_dimension(dim))
+    if not axes:
         raise ValueError("the product has no lat coordinate to remap")
     grid = np.asarray(config.vertical_grid()["levels"] if levels is None else levels, dtype="float64")
     band_edges, band_centers = latitude_bands(width_degrees)
-    weights = latitude_band_weights(ds["lat"].values, band_edges)
     fields, stems = statistic_fields(ds, names, statistics)
     if not fields:
         raise ValueError("the product holds no statistic field to remap")
     carried = set(fields) | set(_suffixed_fields(ds, cf.STATISTIC_ORDER)) | set(cf._pressure_fields(ds))
     for other in ds.data_vars:
-        if other not in carried and "lat" in ds[other].dims:
+        if other not in carried and any(vertical.is_latitude_dimension(dim) for dim in ds[other].dims):
             raise ValueError(f"{other} is neither a statistic field nor a published pressure field but varies with "
                              f"latitude; it cannot be remapped by any rule of this module")
-    remapped = {name: remap_field(ds, name, grid, weights, band_centers, width_degrees) for name in fields}
+    remapped = {}
+    for name in fields:
+        axis = next((dim for dim in ds[name].dims if vertical.is_latitude_dimension(dim)), None)
+        if axis is None:
+            raise ValueError(f"{name} carries no latitude dimension, so no band can be formed from it")
+        if axis == "lat":
+            source = ds
+        else:
+            swap = {axis: "lat"}
+            if "lat" in ds.dims:
+                swap["lat"] = axis
+            source = ds.rename(swap)
+        weights = latitude_band_weights(source["lat"].values, band_edges)
+        remapped[name] = remap_field(source, name, grid, weights, band_centers, width_degrees)
     product = xr.Dataset(remapped, coords={
         "time": ds["time"],
         "pressure": ("pressure", grid, _pressure_coordinate_attributes(grid)),

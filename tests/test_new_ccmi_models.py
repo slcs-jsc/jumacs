@@ -95,9 +95,11 @@ def test_archive_family_selection_agrees_between_download_and_reader(monkeypatch
     assert {(row["variable"], row["family"]) for row in selected} == {("ta", "AmonZ"), ("ps", "Amon")}
 
 
-def test_niwa_mismatched_ep_flux_latitudes_are_excluded_from_default_build():
+def test_niwa_ep_fluxes_join_the_product_on_their_own_latitude_grid():
     config = load_config("NIWA-UKCA2")
-    assert {"epfy", "epfz", "c2h6"}.isdisjoint(configured_variables("NIWA-UKCA2", config))
+    configured = configured_variables("NIWA-UKCA2", config)
+    assert {"epfy", "epfz"} <= set(configured)
+    assert "c2h6" not in configured
     assert config["variables"]["EP_flux_meridional"] == "epfy"
 
 

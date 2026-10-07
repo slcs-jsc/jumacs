@@ -15,7 +15,8 @@ import xarray as xr
 
 from . import cf
 from .config import ROOT, load_config, reference_period, is_waccmx, model_slug, vertical_grid
-from .vertical import PRESSURE_ATTRS, native_pressure, pressure_report, vertical_dimension
+from .vertical import (PRESSURE_ATTRS, is_latitude_dimension, native_pressure, pressure_report,
+                       vertical_dimension)
 from .netcdf import open_cftime_dataset
 
 
@@ -265,7 +266,9 @@ def product_attributes(model, config, start_year, end_year, names, coverage_boun
         "source_time_coverage_end": str(max(coverage_bounds)) if coverage_bounds else "",
         "product": "monthly climatology of zonal means on the native vertical and horizontal grid of one model",
         "horizontal_grid": "zonal mean over all longitudes; latitude is the only horizontal dimension and it is "
-                           "the native latitude grid of the model",
+                           "the native latitude grid of the model; when the model carries more than one latitude "
+                           "grid each is a dimension of its own (lat, lat_2, ...) and every field names its own "
+                           "in its latitude_axis attribute",
         "statistics": " ".join(cf.STATISTIC_ORDER),
         "variable_naming": ("one field per source variable and statistic, named <variable>_<statistic>: "
                             "<variable>_mean, <variable>_sigma, <variable>_minimum, <variable>_maximum, "
@@ -281,6 +284,7 @@ def product_attributes(model, config, start_year, end_year, names, coverage_boun
                                       f"{application['levels'][-1]:g} Pa; this shared grid is applied when models "
                                       f"are combined, not in this product"),
         "latitude_count": vertical["latitude_count"],
+        "latitude_counts": vertical["latitude_counts"],
         "application_latitude_bands": "the fixed 5 degree area-weighted latitude bands are applied when models "
                                       "are combined, not in this product",
         "missing_value_policy": "NaN where no source value exists; n_years counts finite contributions",
@@ -320,11 +324,11 @@ def _check_latitude(model, variable, anchor_variable, anchor, latitude):
             f"latitude points, maximum absolute coordinate difference {difference} degrees")
 
 
-def _latitude_axis(part):
-    """The 1-D latitude coordinate of one part, or None when the part carries no latitude dimension."""
-    if "lat" not in part.coords or "lat" not in part.dims:
+def _latitude_axis(part, dim="lat"):
+    """The 1-D latitude coordinate of one part under one name, or None when the part does not carry it."""
+    if dim not in part.coords or dim not in part.dims:
         return None
-    return np.asarray(part["lat"].values, "float64")
+    return np.asarray(part[dim].values, "float64")
 
 
 def latitude_anchor(parts):
@@ -336,18 +340,83 @@ def latitude_anchor(parts):
     return None, ""
 
 
-def pin_field_latitude(part, model, label, anchor, anchor_variable):
-    """Pin the latitude coordinate of one part onto the canonical grid of the product.
+def pin_field_latitude(part, model, label, anchor, anchor_variable, dim="lat"):
+    """Pin one latitude coordinate of one part onto the canonical grid of the product dimension.
 
     A grid that agrees with the anchor to LATITUDE_SNAP_TOLERANCE_DEGREES is snapped to it; the values of
     the data are never interpolated, reordered, or rounded. A grid that differs by more than that, or that
     disagrees in size or order, is a real mismatch and raises instead of being unioned.
     """
-    latitude = _latitude_axis(part)
+    latitude = _latitude_axis(part, dim)
     if latitude is None or anchor is None or np.array_equal(latitude, anchor):
         return part
     _check_latitude(model, label, anchor_variable, anchor, latitude)
-    return part.assign_coords(lat=(("lat",), anchor, dict(part["lat"].attrs)))
+    return part.assign_coords(**{dim: ((dim,), anchor, dict(part[dim].attrs))})
+
+
+def latitude_anchors(parts):
+    """The canonical grid of every latitude dimension of the assembled parts, by dimension name."""
+    anchors = {}
+    for part in parts:
+        for dim in part.dims:
+            if dim in anchors or not is_latitude_dimension(dim):
+                continue
+            anchors[dim] = (np.asarray(part[dim].values, "float64"), _part_variable(part))
+    return anchors
+
+
+def pin_part_latitudes(part, model, anchors):
+    """Pin every latitude coordinate a part carries onto the canonical grid of its own dimension."""
+    label = _part_variable(part)
+    for dim, (values, provider) in anchors.items():
+        part = pin_field_latitude(part, model, label, values, provider, dim)
+    return part
+
+
+def _same_latitude_grid(known, values):
+    """Whether two latitude grids describe the same axis: same points in the same order, to the snap tolerance."""
+    known, values = np.asarray(known, "float64"), np.asarray(values, "float64")
+    if known.shape != values.shape:
+        return False
+    if not np.array_equal(np.argsort(known, kind="stable"), np.argsort(values, kind="stable")):
+        return False
+    return bool(np.allclose(values, known, rtol=0.0, atol=LATITUDE_SNAP_TOLERANCE_DEGREES))
+
+
+def latitude_grid_name(grids, latitude):
+    """The product name of one native latitude dimension, so distinct grids get distinct names.
+
+    NIWA publishes its EP fluxes on a 72-point latitude axis while everything else sits on the 73-point
+    one. Merged under one name the dimension becomes the union of two different axes and most rows of both
+    fields turn into NaN, so the second grid is published as 'lat_2' and so on. Nothing is resampled: each
+    grid keeps its own points, and grids that differ only by roundoff are one grid snapped onto one anchor.
+    """
+    for name, anchor in grids.items():
+        if _same_latitude_grid(anchor, latitude):
+            return name
+    name = "lat" if not grids else f"lat_{len(grids) + 1}"
+    grids[name] = np.asarray(latitude, "float64")
+    return name
+
+
+def assign_latitude_grid(part, grids, model="", label=""):
+    """Name and pin the latitude dimension of one part, so distinct native grids get distinct dimensions.
+
+    A part whose latitude axis matches a registered grid under any tolerance is snapped onto that grid's
+    anchor and keeps its dimension name; an axis that genuinely differs is registered as a new grid and
+    renamed, exactly as a second vertical grid is renamed to 'lev_2'. Values are never interpolated or
+    reordered, and a grid outside the snap tolerance is a new axis here, not an error: unlike two parts
+    that share one dimension name, two genuinely different axes of one model are a fact of the model.
+    """
+    latitude = _latitude_axis(part)
+    if latitude is None:
+        return part
+    name = latitude_grid_name(grids, latitude)
+    anchor = grids[name]
+    if name == "lat":
+        return pin_field_latitude(part, model, label, anchor, "")
+    renamed = part.rename({"lat": name})
+    return renamed.assign_coords(**{name: ((name,), anchor, dict(renamed[name].attrs))})
 
 
 def pin_latitude(parts, model="", anchor=None, anchor_variable=""):
@@ -460,7 +529,8 @@ def _entry_level_count(entry, level):
         return int(pressure.sizes[level])
     if pressure.ndim == 1:
         return int(pressure.size)
-    axes = [dim for dim in pressure.dims if dim not in {"time", "month", "lat", cf.BOUNDS_DIMENSION}]
+    axes = [dim for dim in pressure.dims
+            if dim not in {"time", "month", cf.BOUNDS_DIMENSION} and not is_latitude_dimension(dim)]
     return int(pressure.sizes[axes[0]]) if axes else int(pressure.size)
 
 
@@ -514,6 +584,7 @@ def pin_level_coordinates(parts, pressures, published, model=""):
 
 def _vertical_summary(pressures, published, combined, vertical_dims):
     descriptions, counts = [], {}
+    latitudes = {dim: int(combined.sizes[dim]) for dim in combined.dims if is_latitude_dimension(dim)}
     for level in vertical_dims:
         counts[level] = int(combined.sizes[level])
         entry = pressures.get(level, {})
@@ -530,7 +601,8 @@ def _vertical_summary(pressures, published, combined, vertical_dims):
                       "no three-dimensional fields; two-dimensional fields carry no vertical dimension",
             "level_count": max(counts.values(), default=0),
             "level_counts": "; ".join(f"{level}={count}" for level, count in sorted(counts.items())) or "none",
-            "latitude_count": int(combined.sizes.get("lat", 0))}
+            "latitude_count": latitudes.get("lat", 0),
+            "latitude_counts": "; ".join(f"{dim}={size}" for dim, size in sorted(latitudes.items())) or "none"}
 
 
 def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), names=None, pressures=None):
@@ -540,14 +612,16 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
     pressures = pressures or {}
     names = sorted(names or {part[key].attrs["source_variable"] for part in parts for key in part.data_vars})
     months = [part.rename({"month": "time"}) for part in normalize_latitude(parts, model)]
-    anchor, anchor_variable = latitude_anchor(months)
+    anchors = latitude_anchors(months)
+    months = [pin_part_latitudes(part, model, anchors) for part in months]
     published = {level: pressure_field_name(pressures, level) for level, entry in sorted(pressures.items())
                  if hybrid_pressure_field(entry) is not None}
     months = pin_level_coordinates(months, pressures, published, model)
     published_parts = []
     for level, name in sorted(published.items()):
         field = hybrid_pressure_field(pressures[level]).rename({"month": "time"}).rename(name)
-        field = pin_field_latitude(field, model, name, anchor, anchor_variable)
+        for dim, (values, provider) in sorted(anchors.items()):
+            field = pin_field_latitude(field, model, name, values, provider, dim)
         values, attrs = level_coordinate_description(pressures[level], level, name,
                                                      _shared_source_note(pressures, level))
         field = field.assign_coords(**{level: ((level,), values, attrs)})
@@ -556,15 +630,17 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
                                              pressures[level].get("source_level", level))
         published_parts.append(field)
     combined = xr.merge(months + published_parts, join="outer", compat="override")
-    if anchor is not None and combined.sizes.get("lat", 0) != anchor.size:
-        raise RuntimeError(
-            f"Climatology product of {model} merged onto {combined.sizes.get('lat', 0)} latitude points, the "
-            f"canonical grid taken from '{anchor_variable}' has {anchor.size}; the latitude axis of a product is "
-            f"never expanded by a merge, so one of its fields carries another latitude grid")
+    for dim, (values, provider) in sorted(anchors.items()):
+        if combined.sizes.get(dim, 0) != values.size:
+            raise RuntimeError(
+                f"Climatology product of {model} merged onto {combined.sizes.get(dim, 0)} latitude points of "
+                f"'{dim}', the canonical grid taken from '{provider}' has {values.size}; the latitude axes of a "
+                f"product are never expanded by a merge, so one of its fields carries another latitude grid")
     vertical_dims = sorted({vertical_dimension(variable) for variable in combined.data_vars.values()
                             if variable.ndim == 3} - {None})
+    latitude_dims = sorted(dim for dim in combined.dims if is_latitude_dimension(dim))
     stray = sorted(dim for dim in combined.dims
-                   if dim not in {"time", "lat", cf.BOUNDS_DIMENSION} | set(vertical_dims))
+                   if dim not in {"time", cf.BOUNDS_DIMENSION} | set(vertical_dims) | set(latitude_dims))
     if stray:
         raise RuntimeError(f"Climatology product kept unexpected dimensions {stray}; an individual product holds "
                            f"only time, latitude, and the native vertical dimensions {vertical_dims or '()'} of "
@@ -601,26 +677,34 @@ def assemble_product(model, start_year, end_year, parts, coverage_bounds=(), nam
             combined[field].attrs["pressure_field"] = named
         else:
             combined[field].attrs["pressure_coordinate"] = level
-    if "lat" in combined.coords:
+    for dim in latitude_dims:
         lat_attrs = {"standard_name": "latitude", "units": "degrees_north", "axis": "Y", "long_name": "latitude"}
-        combined = combined.assign_coords(lat=(("lat",), np.asarray(combined.lat.values, "float64"), lat_attrs))
+        if dim != "lat":
+            lat_attrs["comment"] = (f"native latitude axis of the model, published as '{dim}' because the model "
+                                    f"carries more than one latitude grid; every field on these points names this "
+                                    f"dimension in its 'latitude_axis' attribute")
+        combined = combined.assign_coords(**{dim: ((dim,), np.asarray(combined[dim].values, "float64"), lat_attrs)})
     for field in combined.data_vars:
         if field == "climatology_bounds":
             continue
         variable = combined[field]
+        axis = next((dim for dim in variable.dims if is_latitude_dimension(dim)), None)
+        if axis is not None:
+            variable.attrs["latitude_axis"] = axis
         level = vertical_dimension(variable)
-        order = ["time", level, "lat"] if level is not None else ["time", "lat"]
+        order = [dim for dim in ("time", level, axis) if dim is not None]
         combined[field] = variable.transpose(*order)
     combined.attrs = product_attributes(model, config, start_year, end_year, names, coverage_bounds,
                                         _vertical_summary(pressures, published, combined, vertical_dims), reference)
     return combined
 
 
-def product_encoding(names, vertical_dims=(), pressure_fields=()):
+def product_encoding(names, vertical_dims=(), pressure_fields=(), latitude_dims=()):
     """Compact, CF-safe encodings: float64 coordinates, float32 data, int16 counts."""
     encoding = {"time": {"dtype": "float64"},
-                "climatology_bounds": {"dtype": "float64", "_FillValue": None, "zlib": True},
-                "lat": {"dtype": "float64", "zlib": True}}
+                "climatology_bounds": {"dtype": "float64", "_FillValue": None, "zlib": True}}
+    for dim in sorted(set(latitude_dims) | {"lat"}):
+        encoding[dim] = {"dtype": "float64", "zlib": True}
     for level in vertical_dims:
         encoding[level] = {"dtype": "float64", "zlib": True}
     for name in pressure_fields:
@@ -645,7 +729,8 @@ def write_product(model, start_year, end_year, parts, coverage_bounds=(), pressu
     temporary = dest.with_suffix(".nc.tmp")
     pressure_fields = [name for name in dataset.data_vars if name.startswith("air_pressure")]
     vertical_dims = [level for level in pressures or {} if level in dataset.coords]
-    encoding = product_encoding(names, vertical_dims, pressure_fields)
+    latitude_dims = [dim for dim in dataset.dims if is_latitude_dimension(dim)]
+    encoding = product_encoding(names, vertical_dims, pressure_fields, latitude_dims)
     try:
         dataset.to_netcdf(temporary, engine="netcdf4", encoding=encoding)
         with xr.open_dataset(temporary, decode_cf=False) as written:
@@ -669,6 +754,7 @@ def build_climatology(model, start_year, end_year, variables=None):
     coverage_bounds = []
     pressures = {}
     grids = {}
+    latitude_grids = {}
     for name in names:
         path = base / f"{name}_monthly_zonal.nc"
         if not path.exists():
@@ -689,6 +775,9 @@ def build_climatology(model, start_year, end_year, variables=None):
                     level_pressure = level_pressure.rename({source_level: level})
                 provenance["native_source_level_dimension"] = source_level
                 provenance["native_level_dimension"] = level
+            stats = assign_latitude_grid(stats, latitude_grids, model, name)
+            if pressure is not None:
+                level_pressure = assign_latitude_grid(level_pressure, latitude_grids, model, name)
             parts.append(variable_statistics(name, stats, source_attrs, provenance,
                                              config.get("standard_names") or {}))
             if pressure is not None:

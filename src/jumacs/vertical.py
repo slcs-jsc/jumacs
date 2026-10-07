@@ -5,6 +5,15 @@ import xarray as xr
 LEVEL_PRIORITY = ("lev", "plev", "pressure")
 NON_VERTICAL = ("time", "lat", "month", "lon", "latitude")
 
+
+def is_latitude_dimension(name):
+    """Whether one dimension name is a native latitude axis: 'lat', or 'lat_2', 'lat_3', ... of a second grid."""
+    if name == "lat":
+        return True
+    if not name.startswith("lat_"):
+        return False
+    return name[len("lat_"):].isdigit()
+
 # The fewest levels two profiles must hold usable in common before anything can be joined on them: a single
 # shared level fixes no transition, so the extension stage refuses it and the coverage diagnostics do not
 # offer it as a candidate.
@@ -23,7 +32,7 @@ def pressure_report(value):
 
 def vertical_dimension(field, pressure=None):
     """The native vertical dimension of a field, checked against the pressure array."""
-    candidates = [dim for dim in field.dims if dim not in NON_VERTICAL]
+    candidates = [dim for dim in field.dims if dim not in NON_VERTICAL and not is_latitude_dimension(dim)]
     if pressure is not None:
         shared = [dim for dim in candidates if dim in pressure.dims]
         if shared:
@@ -102,7 +111,8 @@ def interpolate_log_pressure(field, pressure, target_pa, bridge_gaps=True):
     """
     level = next((dim for dim in pressure.dims if dim in field.dims and dim in LEVEL_PRIORITY), None)
     if level is None:
-        level = next((dim for dim in pressure.dims if dim in field.dims and dim not in NON_VERTICAL), None)
+        level = next((dim for dim in pressure.dims if dim in field.dims and dim not in NON_VERTICAL
+                      and not is_latitude_dimension(dim)), None)
     if level is None:
         raise ValueError("No shared native vertical dimension")
     field, pressure = own_level_coordinate(field, level), own_level_coordinate(pressure, level)
@@ -136,8 +146,9 @@ def interpolate_log_pressure(field, pressure, target_pa, bridge_gaps=True):
                             vectorize=True, dask="allowed",
                             output_dtypes=[float], dask_gufunc_kwargs={"output_sizes": {"pressure": len(targets)}})
     result = result.transpose(..., "pressure")
-    if "lat" in result.dims:
-        result = result.transpose(..., "lat")
+    axis = next((dim for dim in result.dims if is_latitude_dimension(dim)), None)
+    if axis is not None:
+        result = result.transpose(..., axis)
     return result.assign_coords(pressure=(("pressure",), targets, dict(PRESSURE_ATTRS)))
 
 
