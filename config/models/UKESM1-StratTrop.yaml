@@ -16,11 +16,14 @@ model:
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
-  climatology: false
+  zonal_processing: true
+  climatology: true
   compact_waccmx: false
 paths: {raw: data/raw/UKESM1-StratTrop/refD1, zonal: data/processed/UKESM1-StratTrop/refD1, climatology: products/climatology/UKESM1-StratTrop}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
+# All mapped 3D fields are published on AmonZ pressure levels (39 levels, 3-100000 Pa), so the pressure-level
+# family is preferred and the Amon hybrid-height levels (no formula terms, coefficients not in the files) are not
+# used. Amon contributes 2D surface/column fields only.
 variables:
   Br: br
   BrCl: brcl
@@ -76,3 +79,4 @@ variables:
   tropopause_temperature: tatp
   zonal_wind: ua
 preferred_families: {}
+preferred_family_when_available: AmonZ

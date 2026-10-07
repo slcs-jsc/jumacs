@@ -1,4 +1,4 @@
-"""The three additional refD1 models use their published AmonZ pressure grids."""
+"""The additional refD1 models use their published AmonZ pressure grids."""
 
 from pathlib import Path
 from shutil import copyfile
@@ -134,3 +134,72 @@ def test_niwa_epfy_blow_up_values_are_missing_before_any_statistics():
     assert out.isel(time=0, plev=0).item() == pytest.approx(5.0e13)
     assert np.isnan(out.isel(time=0, plev=1).item())
     assert np.isnan(out.isel(time=0, plev=2).item())
+
+
+PUBLISHED_LEVEL_MODELS = ("ACCESS-CM2-Chem", "UKESM1-StratTrop")
+FILE_STAMPS = {"ACCESS-CM2-Chem": "r1i1p1f1_gn_198501-198612",
+               "UKESM1-StratTrop": "r1i1p1f2_grz_19850101-19870101"}
+
+
+def _stamped_raw_file(root, model, family, name, dataset):
+    config = load_config(model)
+    archive = config["model"]["archive_model"]
+    path = root / config["paths"]["raw"] / family / name / (
+        f"{name}_{family}_{archive}_refD1_{FILE_STAMPS[model]}.nc")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dataset.to_netcdf(path)
+    return path
+
+
+def test_access_and_ukesm_are_buildable_from_published_pressure_levels():
+    for model in PUBLISHED_LEVEL_MODELS:
+        config = load_config(model)
+        assert config["capabilities"]["zonal_processing"] is True
+        assert config["capabilities"]["climatology"] is True
+        assert config["coordinates"] == {"latitude": "lat", "longitude": "lon",
+                                         "level": "plev", "pressure": "plev"}
+        assert config["preferred_family_when_available"] == "AmonZ"
+    access = load_config("ACCESS-CM2-Chem")
+    assert set(access["exclude_from_climatology"]) == {"c2h6"}
+    assert "c2h6" in access["variables"].values()
+    assert "c2h6" not in configured_variables("ACCESS-CM2-Chem", access)
+    assert "exclude_from_climatology" not in load_config("UKESM1-StratTrop")
+
+
+@pytest.mark.parametrize("model", PUBLISHED_LEVEL_MODELS)
+def test_access_and_ukesm_native_and_application_products(tmp_path, monkeypatch, model):
+    import jumacs.build as build_module
+    import jumacs.climatology as climatology_module
+    import jumacs.config as config_module
+    import jumacs.zonal as zonal_module
+
+    for module in (build_module, climatology_module, config_module, zonal_module):
+        monkeypatch.setattr(module, "ROOT", tmp_path)
+    (tmp_path / "config").mkdir()
+    copyfile(Path(__file__).resolve().parents[1] / "config" / "climatology.yaml",
+             tmp_path / "config" / "climatology.yaml")
+    time = xr.date_range("1985-01", periods=24, freq="MS", use_cftime=True)
+    temperature = xr.Dataset(
+        {"ta": (("time", "plev", "lat"), np.full((24, 3, 3), 230.), {"units": "K"})},
+        coords={"time": time, "lat": [-45., 0., 45.],
+                "plev": ("plev", [100000., 10000., 3.],
+                         {"units": "Pa", "standard_name": "air_pressure", "positive": "down"})})
+    _stamped_raw_file(tmp_path, model, "AmonZ", "ta", temperature)
+    pressure = xr.Dataset(
+        {"ps": (("time", "lat", "lon"), np.full((24, 3, 4), 100000.), {"units": "Pa"})},
+        coords={"time": time, "lat": [-45., 0., 45.], "lon": [0., 90., 180., 270.]})
+    _stamped_raw_file(tmp_path, model, "Amon", "ps", pressure)
+
+    assert source_files(model, "temperature")[0].parent.parent.name == "AmonZ"
+    assert source_files(model, "surface_pressure")[0].parent.parent.name == "Amon"
+    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure"])
+    assert report["ok"] is True
+    with xr.open_dataset(report["product"], decode_cf=False) as native:
+        cf.assert_product(native, names=("ta", "ps"), kind="individual")
+        assert native["ta_mean"].ndim == 3
+        assert native["ps_mean"].dims == ("time", "lat")
+    path = build_application_product(model, 1985, 1986, extend=False, root=tmp_path)
+    with xr.open_dataset(path, decode_cf=False) as application:
+        cf.assert_product(application, names=("ta", "ps"), kind="application")
+        assert application.sizes["pressure"] == 124
+        assert application.sizes["lat"] == 36

@@ -171,6 +171,10 @@ def build_zonal(model, variable):
     if len(months) != len(set(months)):
         raise ValueError(f"Duplicate months for {model} {name}")
     out = data.to_dataset(name=name)
+    foreign = [c for c in out.coords if c not in out.dims
+               and (out[c].ndim == 0 or not set(out[c].dims) <= set(data.dims))]
+    if foreign:
+        out = out.drop_vars(foreign)
     if pressures:
         out["air_pressure"] = xr.concat(pressures, dim="time").sortby("time")
     out.attrs = {"project": "JuMACS", "model": model, "experiment": config["model"]["experiment"], "source_variable": name,
