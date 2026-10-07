@@ -121,3 +121,16 @@ def test_ccsr_near_fill_values_are_missing_before_longitude_mean(tmp_path):
         np.testing.assert_allclose(out.isel(time=0, lev=0, lat=0).item(), 220.)
         assert np.isnan(out.isel(time=0, lev=0, lat=1).item())
         np.testing.assert_allclose(out.isel(time=0, lev=1).values, [240., 250.])
+
+
+def test_niwa_epfy_blow_up_values_are_missing_before_any_statistics():
+    config = load_config("NIWA-UKCA2")
+    assert config["abs_magnitude_limits"] == {"epfy": 1.0e14}
+    values = np.array([[[5.0e13], [-3.0e33], [1.0e14]]], dtype="float32")
+    ds = xr.Dataset({"epfy": (("time", "plev", "lat"), values, {"units": "m3 s-1"})},
+                    coords={"time": xr.date_range("1985-01", periods=1, use_cftime=True),
+                            "plev": ("plev", [10000., 9000., 8000.], {"units": "Pa"}), "lat": [0.]})
+    out = zonal_mean(ds, "epfy", abs_magnitude_limit=config["abs_magnitude_limits"]["epfy"])
+    assert out.isel(time=0, plev=0).item() == pytest.approx(5.0e13)
+    assert np.isnan(out.isel(time=0, plev=1).item())
+    assert np.isnan(out.isel(time=0, plev=2).item())

@@ -19,8 +19,19 @@ def mask_near_fill(data, near_fill_relative_tolerance=None):
     return data
 
 
-def zonal_mean(ds, variable, longitude="lon", source_kind=None, near_fill_relative_tolerance=None):
+def mask_abs_magnitude(data, abs_magnitude_limit=None):
+    """Mask archived values whose magnitude is beyond anything the field can physically reach."""
+    if abs_magnitude_limit is not None:
+        attrs = dict(data.attrs)
+        data = data.where(np.abs(data) < float(abs_magnitude_limit))
+        data.attrs = attrs
+    return data
+
+
+def zonal_mean(ds, variable, longitude="lon", source_kind=None, near_fill_relative_tolerance=None,
+               abs_magnitude_limit=None):
     data = mask_near_fill(ds[variable], near_fill_relative_tolerance)
+    data = mask_abs_magnitude(data, abs_magnitude_limit)
     if longitude in data.dims:
         if data.sizes[longitude] == 1:
             data = data.isel({longitude: 0}, drop=True)
@@ -65,7 +76,8 @@ def zonal_smoke(model, variable):
         sample = ds.isel(time=slice(0, 1))
         lon_name = coords["longitude"]
         arr = zonal_mean(sample, name, lon_name, config["model"].get("source_kind"),
-                         config.get("near_fill_relative_tolerance")).load()
+                         config.get("near_fill_relative_tolerance"),
+                         config.get("abs_magnitude_limits", {}).get(name)).load()
         out = arr.to_dataset(name=name)
         finite = float(np.isfinite(arr.values).mean())
         report["zonal_dims"] = {d: int(s) for d, s in arr.sizes.items()}
@@ -135,7 +147,8 @@ def build_zonal(model, variable):
             for start in range(0, ds.sizes["time"], 12):
                 chunk = ds.isel(time=slice(start, start + 12))
                 arr = zonal_mean(chunk, name, lon_name, config["model"].get("source_kind"),
-                                 config.get("near_fill_relative_tolerance")).load()
+                                 config.get("near_fill_relative_tolerance"),
+                                 config.get("abs_magnitude_limits", {}).get(name)).load()
                 if config.get("squeeze_singleton_level") and arr.sizes.get(config["coordinates"]["level"]) == 1:
                     arr = arr.squeeze(config["coordinates"]["level"], drop=True)
                 current = (tuple((dim, arr.sizes[dim]) for dim in arr.dims if dim != "time"),
