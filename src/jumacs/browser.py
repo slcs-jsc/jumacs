@@ -111,9 +111,7 @@ def _map_values(source, model, native, year):
         if any(len(found) != 1 for found in indices):
             raise ValueError(f"Expected January/April/July/October {year} in {source.name}")
         sample = ds.isel(time=[int(found[0]) for found in indices])
-        field = zonal.mask_abs_magnitude(
-            zonal.mask_near_fill(sample[native], model_config.get("near_fill_relative_tolerance")),
-            model_config.get("abs_magnitude_limits", {}).get(native))
+        field = zonal.mask_near_fill(sample[native], model_config.get("near_fill_relative_tolerance"))
         latitude = model_config["coordinates"]["latitude"]
         longitude = model_config["coordinates"]["longitude"]
         if (latitude not in field.dims or longitude not in field.dims or

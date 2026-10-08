@@ -22,12 +22,13 @@ capabilities:
   compact_waccmx: false
 paths: {raw: data/raw/NIWA-UKCA2/refD1, zonal: data/processed/NIWA-UKCA2/refD1, climatology: products/climatology/NIWA-UKCA2}
 coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
-# EP fluxes use a 72-point latitude axis; they join the product on its own grid (lat_2), like extra level grids.
-# NIWA-UKCA2 epfy carries a diffuse numerical blow-up tail (to 4.3e36, peaking near 1e17) on top of the
-# physical distribution (peaking at 1e11-1e12); the 1e14 trough between the two modes marks the cut-off.
-abs_magnitude_limits: {epfy: 1.0e+14}
+# EP fluxes use a separate 72-point latitude axis; JuMACS technically supports that grid (they would join
+# the product as lat_2, like extra level grids), and the fields are archived and processable. However, the
+# NIWA EP-flux diagnostics show questionable/extreme magnitudes relative to the other CCMI models, so they
+# are intentionally omitted from the production climatology as a data-quality decision.
+# No scientific correction or rescaling is applied; the archived files remain untouched.
 # c2h6 exists only on Amon hybrid-height levels; its pressure needs the separate pa field.
-exclude_from_climatology: [c2h6]
+exclude_from_climatology: [c2h6, epfy, epfz]
 variables:
   Br: br
   BrCl: brcl
