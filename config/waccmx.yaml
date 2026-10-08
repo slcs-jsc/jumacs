@@ -1,3 +1,4 @@
+# CEDA catalogue dataset record with registered DOI, OGL v3.
 model:
   name: WACCM-X
   display_name: WACCM-X transient 1950-2015
@@ -8,7 +9,10 @@ model:
   slug: waccmx
   archive_model: WACCM-X
   experiment: transient-1950-2015
+  doi: 10.5285/dc91f5e39ae34fd883af81dfdbaf659c
+  license: OGL v3
   dataset_uuid: dc91f5e39ae34fd883af81dfdbaf659c
+  persistent_identifier: https://catalogue.ceda.ac.uk/uuid/dc91f5e39ae34fd883af81dfdbaf659c/
   archive_base: https://data.ceda.ac.uk/badc/deposited2020/WACCM-X_1950-2015/data
   source_kind: monthly_zonal_multivariable
 capabilities:

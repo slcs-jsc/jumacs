@@ -73,7 +73,7 @@ def _row(name, root):
             "period_used": f"{period['start_year']}–{period['end_year']}",
             "source_archive": _ARCHIVE_NAMES.get(netloc, netloc),
             "doi": model.get("doi"),
-            "persistent_identifier": urls[0] if urls else None,
+            "persistent_identifier": model.get("persistent_identifier") or (urls[0] if urls else None),
             "dataset_uuid": model.get("dataset_uuid"),
             "license": model.get("license", "unknown"),
             "raw_data_used_bytes": bytes_used,

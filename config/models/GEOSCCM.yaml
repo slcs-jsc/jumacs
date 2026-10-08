@@ -1,3 +1,4 @@
+# CEDA catalogue dataset record, OGL v3; no registered dataset DOI.
 model:
   name: GEOSCCM
   display_name: GEOSCCM
@@ -8,7 +9,9 @@ model:
   slug: geosccm_refd1
   archive_model: GEOSCCM
   experiment: refD1
+  license: OGL v3
   dataset_uuid: 0689a7f2e0964a7b89e395ee68d7eee5
+  persistent_identifier: https://catalogue.ceda.ac.uk/uuid/0689a7f2e0964a7b89e395ee68d7eee5/
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NASA-GSFC/GEOSCCM/refD1/r1i1p1f1
 capabilities:
   archive_inventory: true

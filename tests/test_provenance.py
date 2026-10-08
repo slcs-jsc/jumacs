@@ -34,13 +34,21 @@ def test_provenance_rows_identifiers_licences_and_volumes(tmp_path):
     assert "collection-level" in rows["CESM2-WACCM"]["notes"]
     assert rows["CESM2-WACCM"]["persistent_identifier"].endswith("/refD1/r1i1p1f1")
     assert "omitted from the climatology" in rows["NIWA-UKCA2"]["notes"]
-    assert rows["EMAC-CCMI2"]["license"] == "unknown" and rows["EMAC-CCMI2"]["accessed"] is None
+    assert rows["EMAC-CCMI2"]["license"] == "OGL v3" and rows["EMAC-CCMI2"]["accessed"] is None
+    assert rows["EMAC-CCMI2"]["doi"] is None
+    assert rows["EMAC-CCMI2"]["persistent_identifier"] == \
+        "https://catalogue.ceda.ac.uk/uuid/9b15ae551fda4035a7940a3adbe31691/"
     assert rows["EMAC-CCMI2"]["raw_data_used_bytes"] is None
     assert rows["EMAC-CCMI2"]["raw_data_used_human"] == "unknown"
+    geosccm = rows["GEOSCCM"]
+    assert geosccm["license"] == "OGL v3" and geosccm["doi"] is None and geosccm["accessed"] is None
+    assert geosccm["persistent_identifier"] == "https://catalogue.ceda.ac.uk/uuid/0689a7f2e0964a7b89e395ee68d7eee5/"
     waccmx = rows["WACCM-X transient 1950-2015"]
     assert waccmx["role"] == "upper-atmosphere extension" and waccmx["institution"] == "NCAR"
     assert waccmx["experiment"] == "transient-1950-2015" and waccmx["member"] == ""
-    assert waccmx["license"] == "unknown" and waccmx["doi"] is None
+    assert waccmx["license"] == "OGL v3" and waccmx["accessed"] is None
+    assert waccmx["doi"] == "10.5285/dc91f5e39ae34fd883af81dfdbaf659c"
+    assert waccmx["persistent_identifier"] == "https://catalogue.ceda.ac.uk/uuid/dc91f5e39ae34fd883af81dfdbaf659c/"
     assert rows["NIWA-UKCA2"]["license"] == "OGL v3"
 
 
