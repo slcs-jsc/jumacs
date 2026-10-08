@@ -9,12 +9,24 @@ from .vertical import pressure_report
 
 
 def mask_near_fill(data, near_fill_relative_tolerance=None):
-    """Mask archived values close to a declared fill marker before processing."""
+    """Mask archived values whose magnitude is within the tolerance of a declared fill marker.
+
+    Two quirks of the archives decide the shape of this mask. First, the markers are read
+    from the decoding encoding and from the attributes: xarray removes _FillValue from the
+    encoding when a file declares several fill markers (it then reports the value in the
+    attributes instead), and a marker that only lives in the attributes is still a marker.
+    Second, the comparison is on magnitude: a file can store the negative of its declared
+    marker as junk (CESM2-WACCM does, on EP fluxes), and a fill marker identifies a
+    bit pattern, not a sign the archived junk respects.
+    """
     if near_fill_relative_tolerance:
-        marker = data.encoding.get("_FillValue", data.encoding.get("missing_value"))
-        if marker is not None:
+        markers = [data.encoding.get("_FillValue"), data.encoding.get("missing_value"),
+                   data.attrs.get("_FillValue"), data.attrs.get("missing_value")]
+        for marker in {None if m is None else abs(float(m)) for m in markers}:
+            if marker is None:
+                continue
             attrs = dict(data.attrs)
-            data = data.where(~np.isclose(data, marker, rtol=near_fill_relative_tolerance, atol=0.0))
+            data = data.where(~np.isclose(np.abs(data), marker, rtol=near_fill_relative_tolerance, atol=0.0))
             data.attrs = attrs
     return data
 

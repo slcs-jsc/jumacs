@@ -8,7 +8,7 @@ from jumacs.coordinates import hybrid_pressure
 from jumacs.zonal import is_hybrid_level, zonal_smoke
 
 MAPPED = ("CMAM", "CNRM-MOCAGE", "SOCOL")
-DEFERRED = ("CESM2-WACCM",)
+DEFERRED = ("MIROC-ES2H",)
 
 
 def _times(n=3):
@@ -163,7 +163,7 @@ def test_zonal_smoke_pressure_level_route(tmp_path, monkeypatch):
 
 
 def test_zonal_smoke_deferred_reports_incomplete_mapping():
-    report, dest = zonal_smoke("CESM2-WACCM", "temperature")
+    report, dest = zonal_smoke("MIROC-ES2H", "temperature")
     assert report["ok"] is False
     assert dest is None
     assert "mapping incomplete" in report["reason"]

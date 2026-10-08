@@ -203,3 +203,87 @@ def test_access_and_ukesm_native_and_application_products(tmp_path, monkeypatch,
         cf.assert_product(application, names=("ta", "ps"), kind="application")
         assert application.sizes["pressure"] == 124
         assert application.sizes["lat"] == 36
+
+def test_cesm2_waccm_is_buildable_from_published_pressure_levels():
+    config = load_config("CESM2-WACCM")
+    assert config["capabilities"]["zonal_processing"] is True
+    assert config["capabilities"]["climatology"] is True
+    assert config["coordinates"] == {"latitude": "lat", "longitude": "lon",
+                                     "level": "plev", "pressure": "plev"}
+    assert config["preferred_family_when_available"] == "AmonZ"
+    assert config["near_fill_relative_tolerance"] == pytest.approx(1e-06)
+    assert set(config["exclude_from_climatology"]) == {"c2h2", "c2h6", "co2", "epfy"}
+    assert {"c2h2", "c2h6", "co2", "epfy"} <= set(config["variables"].values())
+    configured = configured_variables("CESM2-WACCM", config)
+    assert {"c2h2", "c2h6", "co2", "epfy"}.isdisjoint(configured)
+    assert "ta" in configured and "epfz" in configured
+
+
+def test_cesm2_waccm_archive_family_selection_prefers_amonz(monkeypatch):
+    from jumacs import download
+
+    inventory = {"files": [
+        {"variable": "ta", "family": family, "start": "198501", "end": "198612"}
+        for family in ("Amon", "AmonZ")
+    ] + [{"variable": "ps", "family": "Amon", "start": "198501", "end": "198612"}]}
+    monkeypatch.setattr(download, "load_inventory", lambda selected: inventory)
+    selected, missing = select_files("CESM2-WACCM", 1985, 1986, ["temperature", "surface_pressure"])
+    assert not missing
+    assert {(row["variable"], row["family"]) for row in selected} == {("ta", "AmonZ"), ("ps", "Amon")}
+
+
+def test_cesm2_waccm_native_and_application_products(tmp_path, monkeypatch):
+    import jumacs.build as build_module
+    import jumacs.climatology as climatology_module
+    import jumacs.config as config_module
+    import jumacs.zonal as zonal_module
+
+    model = "CESM2-WACCM"
+    for module in (build_module, climatology_module, config_module, zonal_module):
+        monkeypatch.setattr(module, "ROOT", tmp_path)
+    (tmp_path / "config").mkdir()
+    copyfile(Path(__file__).resolve().parents[1] / "config" / "climatology.yaml",
+             tmp_path / "config" / "climatology.yaml")
+    time = xr.date_range("1985-01", periods=24, freq="MS", use_cftime=True)
+    temperature = xr.Dataset(
+        {"ta": (("time", "plev", "lat"), np.full((24, 3, 3), 230.), {"units": "K"})},
+        coords={"time": time, "lat": [-45., 0., 45.],
+                "plev": ("plev", [100000., 10000., 3.],
+                         {"units": "Pa", "standard_name": "air_pressure", "positive": "down"})})
+    _raw_file(tmp_path, model, "AmonZ", "ta", temperature)
+    pressure = xr.Dataset(
+        {"ps": (("time", "lat", "lon"), np.full((24, 3, 4), 100000.), {"units": "Pa"})},
+        coords={"time": time, "lat": [-45., 0., 45.], "lon": [0., 90., 180., 270.]})
+    _raw_file(tmp_path, model, "Amon", "ps", pressure)
+
+    assert source_files(model, "temperature")[0].parent.parent.name == "AmonZ"
+    assert source_files(model, "surface_pressure")[0].parent.parent.name == "Amon"
+    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure"])
+    assert report["ok"] is True
+    with xr.open_dataset(report["product"], decode_cf=False) as native:
+        cf.assert_product(native, names=("ta", "ps"), kind="individual")
+        assert native["ta_mean"].ndim == 3
+        assert native["ps_mean"].dims == ("time", "lat")
+    path = build_application_product(model, 1985, 1986, extend=False, root=tmp_path)
+    with xr.open_dataset(path, decode_cf=False) as application:
+        cf.assert_product(application, names=("ta", "ps"), kind="application")
+        assert application.sizes["pressure"] == 124
+        assert application.sizes["lat"] == 36
+
+
+def test_cesm2_waccm_epfz_near_fill_escapees_are_missing_before_statistics(tmp_path):
+    model = "CESM2-WACCM"
+    marker = np.float32(1e20)
+    escapee = np.nextafter(marker, np.float32(np.inf))
+    values = np.array([[[escapee, -marker, 3.0e6, escapee]]], dtype="float32")
+    ds = xr.Dataset({"epfz": (("time", "plev", "lat"), values, {"units": "m3 s-2"})},
+                    coords={"time": xr.date_range("1985-01", periods=1, use_cftime=True),
+                            "plev": ("plev", [100000.], {"units": "Pa"}),
+                            "lat": [-45., -15., 15., 45.]})
+    path = _raw_file(tmp_path, model, "AmonZ", "epfz", ds)
+    ds.to_netcdf(path, encoding={"epfz": {"_FillValue": marker}})
+    with open_source(path, model, "EP_flux_vertical") as source:
+        out = zonal_mean(source, "epfz",
+                         near_fill_relative_tolerance=load_config(model)["near_fill_relative_tolerance"])
+        np.testing.assert_allclose(out.isel(time=0, plev=0).values, [np.nan, np.nan, 3.0e6, np.nan], equal_nan=True)
+

@@ -1,6 +1,9 @@
 # Verified live 2026-09-30 against CEDA: refD1 files exist in the archive (r1-r4i1p1f1, OGL v3, contact N.A. Davis),
 # but no per-experiment refD1 dataset record was published; dataset_uuid is the CCMI-2022 CESM2-WACCM collection
 # record (contact N.A. Davis, published 2024), so catalogue variable metadata may be empty for this model.
+# Verified against the downloaded refD1 r1i1p1f1 files 2026-10-08: 1950-02-01..2019-01-01 monthly, 192 lat (poles
+# included, same grid in Amon and AmonZ), 288 lon, AmonZ plev 39 levels 100000-3 Pa, fill 1e20 with near-fill
+# escapees on some fields; the 1985-2014 reference period is fully covered.
 model:
   name: CESM2-WACCM
   display_name: CESM2-WACCM
@@ -17,11 +20,25 @@ model:
 capabilities:
   archive_inventory: true
   download: true
-  zonal_processing: false
-  climatology: false
+  zonal_processing: true
+  climatology: true
   compact_waccmx: false
 paths: {raw: data/raw/CESM2-WACCM/refD1, zonal: data/processed/CESM2-WACCM/refD1, climatology: products/climatology/CESM2-WACCM}
-coordinates: {}
+coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
+# All mapped 3D fields except CO2, C2H2 and C2H6 are published on AmonZ pressure levels (39 levels, 100000-3 Pa,
+# identical ladder for every variable), so the pressure-level family is preferred and the Amon hybrid-height levels
+# (lev with formula p = a*p0 + b*ps, but p0 is not in the files) are not used. CO2, C2H2 and C2H6 are archived on
+# those hybrid levels only and cannot be reconstructed from the published metadata because the reference pressure
+# p0 the formula cites is absent from the files, so they are omitted from the production climatology rather than
+# reconstructed with an assumed constant. Amon supplies the 2D fields (ps, toz, ptp, tatp, ztp, tropoz).
+# epfy is omitted as well: like the NIWA case its EP-flux diagnostic carries noise no fill decoding removes -
+# a single month at 100000 Pa reaches 1.6e12 m3 s-2, two thousand times the 99th percentile of that level - and it
+# is a stored value, not a fill artifact, so only a magnitude threshold could hide it. epfz is kept: its only
+# defect is 2310 archived values of -1e20, the negative of its declared 1e20 fill marker, which exact-equality
+# fill decoding leaves behind; the existing near-fill mask, comparing on marker magnitude, removes them and the
+# stratospheric field itself is clean.
+exclude_from_climatology: [c2h2, c2h6, co2, epfy]
+near_fill_relative_tolerance: 0.000001
 variables:
   Br: br
   BrCl: brcl
@@ -95,3 +112,4 @@ variables:
   tropospheric_ozone_column: tropoz
   zonal_wind: ua
 preferred_families: {}
+preferred_family_when_available: AmonZ
