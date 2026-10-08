@@ -10,6 +10,8 @@ model:
   slug: access_cm2_chem_refd1
   archive_model: ACCESS-CM2-Chem
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: 031313dc6bfc4a0baabd58a51629bc21
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/CSIRO/ACCESS-CM2-Chem/refD1/r1i1p1f1
 capabilities:

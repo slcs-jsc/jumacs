@@ -98,6 +98,7 @@ def main(argv=None):
     compact.add_argument("--transition-end", type=float, default=65)
     compact.add_argument("--variable", action="append")
     sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
+    sub.add_parser("provenance", help="Write the source data provenance catalog for every ready dataset (offline; writes products/catalog/data_provenance.csv and .json)")
     sub.add_parser("download-audit", help="Rebuild complete-archive download plans for every available source and write the mirror-plan audit (offline, no transfer)")
     for command, help_text in (
         ("validate-raw", "Validate locally mirrored raw archives against download manifests (offline; no transfer, no inventory refresh)"),
@@ -135,6 +136,11 @@ def main(argv=None):
         from .inventory import build_inventory
         report = build_inventory(args.start_year, args.end_year, model=args.model)
         print(json.dumps(report["summary"], indent=2))
+        return
+    if args.command == "provenance":
+        from .provenance import build_provenance
+        document = build_provenance()
+        print(json.dumps({"datasets": [row["dataset"] for row in document["sources"]]}, indent=2))
         return
     if args.command == "browse":
         from .browser import build_site

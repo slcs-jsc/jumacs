@@ -11,6 +11,8 @@ model:
   slug: ukesm1_strattrop_refd1
   archive_model: UKESM1-StratTrop
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: 2b93a4655e2645a898466c4ea9257c0e
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NCAS-CAMBRIDGE/UKESM1-StratTrop/refD1/r1i1p1f2
 capabilities:

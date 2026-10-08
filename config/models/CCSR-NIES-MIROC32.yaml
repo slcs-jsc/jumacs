@@ -11,6 +11,8 @@ model:
   slug: ccsr_nies_miroc32_refd1
   archive_model: CCSRNIES-MIROC32
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: 4262e08336404147878b3adeb4e68950
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/NIES/CCSRNIES-MIROC32/refD1/r1i1p1f1
 capabilities:

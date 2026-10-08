@@ -10,6 +10,8 @@ model:
   slug: cnrm_mocage_refd1
   archive_model: CNRM-MOCAGE
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: a29e20e863394bbd8a32470ebc8fa04b
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/CNRM-CERFACS/CNRM-MOCAGE/refD1/r1i1p1f1
 capabilities:

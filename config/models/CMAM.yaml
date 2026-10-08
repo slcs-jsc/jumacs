@@ -10,6 +10,8 @@ model:
   slug: cmam_refd1
   archive_model: CMAM
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: 3f06d743521f44a5ba8e666e11f66d6b
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ECCC/CMAM/refD1/r1i1p1f1
 capabilities:

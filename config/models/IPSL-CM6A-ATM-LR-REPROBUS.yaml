@@ -10,6 +10,8 @@ model:
   slug: ipsl_cm6a_atm_lr_reprobus_refd1
   archive_model: IPSL-CM6A-ATM-LR-REPROBUS
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   dataset_uuid: bdd12c0e28f94f3bbdae8bec49399300
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/IPSL-LATMOS/IPSL-CM6A-ATM-LR-REPROBUS/refD1/r1i1p1f1
 capabilities:

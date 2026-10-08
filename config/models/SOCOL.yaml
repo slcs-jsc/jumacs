@@ -13,6 +13,8 @@ model:
   slug: socol_refd1
   archive_model: SOCOL
   experiment: refD1
+  license: OGL v3
+  verified: "2026-09-30"
   member: r1i1p1f1
   dataset_uuid: f088e7a33a25409197ea9b6aa3b90864
   archive_base: https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ETH-PMOD/SOCOL/refD1/gn https://data.ceda.ac.uk/badc/ccmi/data/post-cmip6/ccmi-2022/ETH-PMOD/SOCOL/refD1/gnz

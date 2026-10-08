@@ -300,7 +300,7 @@ def _plot_annual(field, model, label, units, path, *, scale=1.0):
                       "Annual cycle", "Month", path)
 
 
-def _html(records, start_year, end_year, inventory_rows):
+def _html(records, start_year, end_year, inventory_rows, provenance_rows=()):
     catalog = []
     for model, product, fields in records:
         for field in fields:
@@ -310,10 +310,12 @@ def _html(records, start_year, end_year, inventory_rows):
                             "views": {name: path.as_posix() for name, path in field["views"].items()}})
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     inventory_payload = json.dumps(inventory_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
+    provenance_payload = json.dumps(provenance_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     year = config.reference_period()["reference_period"]["nominal_reference_year"]
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
             .replace("__MAP_YEAR__", str(year))
-            .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload))
+            .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload)
+            .replace("__PROVENANCE__", provenance_payload))
 
 
 HTML_TEMPLATE = """<!doctype html>
@@ -321,7 +323,8 @@ HTML_TEMPLATE = """<!doctype html>
 <title>JuMACS · Climatology atlas</title><link rel="stylesheet" href="assets/style.css"></head>
 <body><header><h1>JuMACS climatology atlas</h1>
 <p>Model climatologies on the shared pressure grid · __PERIOD__</p>
-<nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button></nav></header>
+<nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button>
+<button id="provenance-nav">Data provenance</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
 <label for="search">Variable</label><input id="search" type="search" placeholder="Search variable name">
 <div id="variables" aria-label="Available variables"></div></aside>
@@ -362,11 +365,23 @@ Pressure limits use any finite mean value. Click a column heading to sort (↕);
 <th><button class="sort-button" data-sort="waccmx_extended">WACCM-X extended</button></th>
 <th><button class="sort-button" data-sort="application_available">Application product</button></th>
 </tr></thead><tbody id="inventory-body"></tbody></table></div></section>
+<section id="provenance-view" hidden><h2>Data provenance</h2>
+<p>Every source dataset JuMACS processes, with its archive, citation identifiers, licence and the volume of
+raw archive data mirrored for the configured reference period. Sizes are decimal units (1 GB = 10^9 bytes)
+of the regular files held under each source directory, so they describe this installation rather than the
+full archive. DOI cells link to a registered DOI where one exists and otherwise to the stable archive
+record; a dataset UUID covers the archive collection or dataset as noted.</p>
+<div class="table-wrap"><table><thead><tr>
+<th>Dataset</th><th>Institution</th><th>Role</th><th>Experiment · member</th><th>Period used</th>
+<th>Source</th><th>DOI / identifier</th><th>License</th><th>Raw data used</th><th>Accessed</th><th>Notes</th>
+</tr></thead><tbody id="provenance-body"></tbody></table></div></section>
 <script id="catalog" type="application/json">__CATALOG__</script>
 <script id="inventory-data" type="application/json">__INVENTORY__</script>
+<script id="provenance-data" type="application/json">__PROVENANCE__</script>
 <script>
 const catalog = JSON.parse(document.getElementById('catalog').textContent);
 const inventory = JSON.parse(document.getElementById('inventory-data').textContent);
+const provenance = JSON.parse(document.getElementById('provenance-data').textContent);
 const model = document.getElementById('model');
 const search = document.getElementById('search');
 const list = document.getElementById('variables');
@@ -498,14 +513,42 @@ for (const button of document.querySelectorAll('.sort-button')) {
   button.setAttribute('aria-label', label + ', sortable');
 }
 document.querySelector('.sort-button[data-sort="model"]').click();
-for (const [button, show] of [['atlas-nav', false], ['inventory-nav', true]]) {
+const shown = ['atlas', 'inventory-view', 'provenance-view'];
+for (const [button, active] of [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
+                                ['provenance-nav', 'provenance-view']]) {
   document.getElementById(button).onclick = () => {
-    document.getElementById('atlas').hidden = show;
-    document.getElementById('inventory-view').hidden = !show;
-    document.getElementById('atlas-nav').classList.toggle('active', !show);
-    document.getElementById('inventory-nav').classList.toggle('active', show);
+    for (const id of shown) document.getElementById(id).hidden = id !== active;
+    for (const [name, target] of [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
+                                  ['provenance-nav', 'provenance-view']])
+      document.getElementById(name).classList.toggle('active', target === active);
   };
 }
+function renderProvenance() {
+  const body = document.getElementById('provenance-body');
+  body.textContent = '';
+  const text = value => value === null || value === undefined || value === '' ? 'unknown' : String(value);
+  for (const row of provenance) {
+    const tr = document.createElement('tr');
+    const experiment = row.member ? `${row.experiment} · ${row.member}` : text(row.experiment);
+    const values = [text(row.dataset), text(row.institution), text(row.role), experiment,
+                    text(row.period_used), text(row.source_archive), null, text(row.license),
+                    text(row.raw_data_used_human), text(row.accessed), row.notes || ''];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      if (value === null) {
+        const identifier = row.doi ? {href: 'https://doi.org/' + row.doi, label: row.doi} :
+          row.persistent_identifier ? {href: row.persistent_identifier, label: row.persistent_identifier} : null;
+        if (identifier) {
+          const link = document.createElement('a');
+          link.href = identifier.href; link.textContent = identifier.label; cell.append(link);
+        } else cell.textContent = 'unknown';
+      } else cell.textContent = value;
+      tr.append(cell);
+    }
+    body.append(tr);
+  }
+}
+renderProvenance();
 renderInventory();
 render();
 </script></body></html>
@@ -518,8 +561,8 @@ header{background:#12364b;color:white;padding:1.2rem max(1.5rem,calc((100vw - 14
 header h1{margin:0;font-size:1.6rem}header p{margin:.3rem 0 0;color:#cee2e9;font-size:.92rem}
 header nav{display:flex;gap:.5rem;margin-top:.7rem}header nav button.active{background:var(--accent);color:white}
 main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr)}
-main[hidden],#inventory-view[hidden]{display:none}
-#inventory-view{max-width:1420px;margin:auto;padding:1.5rem}
+main[hidden],#inventory-view[hidden],#provenance-view[hidden]{display:none}
+#inventory-view,#provenance-view{max-width:1420px;margin:auto;padding:1.5rem}
 #inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
 table{width:100%;border-collapse:collapse;background:white;font-size:.9rem}
 th,td{padding:.55rem .7rem;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
@@ -633,7 +676,9 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
     end_year = period["end_year"] if end_year is None else end_year
     products = discover_application_products(root, start_year, end_year, model)
     from .inventory import build_inventory
+    from .provenance import build_provenance
     inventory = build_inventory(start_year, end_year, model=model, root=root)
+    provenance = build_provenance(root=root)
     site = root / "site"
     site.mkdir(parents=True, exist_ok=True)
     staging = site / ".browse-staging"
@@ -672,7 +717,8 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
                 entry["application_product"] = None
             entry["map_plot"] = maps.get((row["model"], row["native_variable"]))
             site_inventory.append(entry)
-        (staging / "index.html").write_text(_html(records, start_year, end_year, site_inventory), encoding="utf-8")
+        (staging / "index.html").write_text(
+            _html(records, start_year, end_year, site_inventory, provenance["sources"]), encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
             old = site / name
             if old.is_dir() and not old.is_symlink():
@@ -692,6 +738,7 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return {"site": site, "models": [name for name, _, _ in records],
+            "provenance_sources": len(provenance["sources"]),
             "variables": {name: len(fields) for name, _, fields in records},
             "png_files": sum(len(field["views"]) for _, _, fields in records for field in fields),
             "netcdf_files": len(records), "skipped": skipped,
