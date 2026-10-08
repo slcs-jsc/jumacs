@@ -63,15 +63,19 @@ def _map_path(model, native_name):
 
 
 def _reference_year_source(root, model_config, native, year):
-    """Find an existing geographical Amon file covering the nominal year."""
-    folder = root / model_config["paths"]["raw"] / "Amon"
-    return _year_file(folder / native, native, year)
+    """Find an existing geographical Amon or AmonZ file covering the nominal year."""
+    for table in ("Amon", "AmonZ"):
+        folder = root / model_config["paths"]["raw"] / table
+        found = _year_file(folder / native, native, year)
+        if found is not None:
+            return found
+    return None
 
 
 def _year_file(folder, native, year):
     for path in sorted(folder.glob(f"{native}_*.nc")):
-        match = re.search(r"_(\d{6})-(\d{6})\.nc$", path.name)
-        if match and match[1] <= f"{year}01" and match[2] >= f"{year}10":
+        match = re.search(r"_(\d{6,8})-(\d{6,8})\.nc$", path.name)
+        if match and match[1][:6] <= f"{year}01" and match[2][:6] >= f"{year}10":
             return path
     return None
 
@@ -343,19 +347,20 @@ at 1000, 100, 10 and 1 hPa where native pressure permits, or four surface maps f
 These maps are not 1985–2014 climatological means.</p>
 </section></main><section id="inventory-view" hidden><h2>Data availability</h2>
 <p>Application climatologies are zonal means: their spatial axes are pressure × latitude or latitude only.
-Global maps are separate longitude-resolved fields from the example year __MAP_YEAR__ where available.
+Longitude-resolved marks variables whose raw archive provides a geographical longitude × latitude
+field mappable to pressure (shown as an example-year map); sources published only as zonal means, or
+whose archived vertical levels cannot be mapped to pressure, show no.
 Pressure limits use any finite mean value. Click a column heading to sort (↕); ↑ and ↓ show the current order.</p>
 <label for="inventory-search">Filter model or variable</label><input id="inventory-search" type="search" placeholder="Search inventory">
 <div class="table-wrap"><table><thead><tr>
 <th><button class="sort-button" data-sort="model">Model</button></th>
 <th><button class="sort-button" data-sort="canonical_variable">Variable</button></th>
-<th><button class="sort-button" data-sort="native_variable">Native name</button></th>
-<th><button class="sort-button" data-sort="dimensionality">Climatology grid</button></th>
 <th><button class="sort-button" data-sort="units">Units</button></th>
-<th><button class="sort-button" data-sort="application_available">Application product</button></th>
-<th><button class="sort-button" data-sort="map_plot">Global map</button></th>
+<th><button class="sort-button" data-sort="dimensionality">Dimensionality</button></th>
+<th><button class="sort-button" data-sort="map_plot">Longitude-resolved</button></th>
 <th><button class="sort-button" data-sort="bottom_pressure_hpa">Vertical range (hPa)</button></th>
 <th><button class="sort-button" data-sort="waccmx_extended">WACCM-X extended</button></th>
+<th><button class="sort-button" data-sort="application_available">Application product</button></th>
 </tr></thead><tbody id="inventory-body"></tbody></table></div></section>
 <script id="catalog" type="application/json">__CATALOG__</script>
 <script id="inventory-data" type="application/json">__INVENTORY__</script>
@@ -456,22 +461,15 @@ function renderInventory() {
     const tr = document.createElement('tr');
     const pressure = row.bottom_pressure_hpa == null ? '' :
       `${row.bottom_pressure_hpa.toPrecision(3)}–${row.top_pressure_hpa.toPrecision(3)}`;
-    const grid = row.dimensionality === '3D' ? 'zonal: pressure × latitude' :
-      row.dimensionality === '2D' ? 'zonal: latitude only' : '—';
-    const values = [row.model, row.canonical_variable || '—', row.native_variable,
-      grid, row.units, null, null, pressure,
-      row.waccmx_extended == null ? 'unknown' : row.waccmx_extended ? 'yes' : 'no'];
+    const values = [row.model, row.canonical_variable || '—', row.units,
+      row.dimensionality || '—', row.map_plot ? 'yes' : 'no', pressure,
+      row.waccmx_extended == null ? 'unknown' : row.waccmx_extended ? 'yes' : 'no', null];
     for (const [index, value] of values.entries()) {
       const cell = document.createElement('td');
-      if (index === 5 && row.application_available && row.application_product) {
+      if (index === 7 && row.application_available && row.application_product) {
         const link = document.createElement('a');
         link.href = row.application_product;
         link.textContent = 'NetCDF';
-        cell.append(link);
-      } else if (index === 6 && row.map_plot) {
-        const link = document.createElement('a');
-        link.href = row.map_plot;
-        link.textContent = 'View PNG';
         cell.append(link);
       } else cell.textContent = value === null ? '—' : value;
       tr.append(cell);
@@ -600,7 +598,7 @@ def _render_model(model_name, product, root, staging):
                     timeline_skipped.append((model_name, native, "monthly zonal source missing"))
             map_source = _reference_year_source(root, model_config, native, map_year)
             if map_source is None:
-                map_skipped.append((model_name, native, f"no Amon source covering {map_year}"))
+                map_skipped.append((model_name, native, f"no Amon/AmonZ source covering {map_year}"))
             else:
                 try:
                     map_values, map_lat, map_lon, map_levels, map_units = _map_values(

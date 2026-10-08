@@ -82,8 +82,9 @@ def test_inventory_in_site_and_cli(tmp_path, monkeypatch, capsys):
     site = browser.build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"]
     html = (site / "index.html").read_text()
     assert "Data availability" in html and 'id="inventory-search"' in html
-    assert "Climatology grid" in html and "Global map" in html
-    assert "zonal: pressure × latitude" in html and "zonal: latitude only" in html
+    assert "Longitude-resolved" in html and "Dimensionality" in html
+    assert "Climatology grid" not in html and "Native name" not in html
+    assert 'data-sort="map_plot">Longitude-resolved</button>' in html
     assert "2D/3D</button>" not in html
     assert "Click a column heading to sort (↕)" in html
     assert "inventoryDescending ? ' ↓' : ' ↑' : ' ↕'" in html
