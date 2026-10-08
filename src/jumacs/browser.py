@@ -336,16 +336,19 @@ HTML_TEMPLATE = """<!doctype html>
 <figure><img id="plot" alt=""><figcaption><span id="caption"></span>
 <span><a class="download" id="png" download>Download PNG</a>
 <a class="download" id="product" download>Download NetCDF</a></span></figcaption></figure>
-<p class="note">Cross sections: January, April, July and October on the application pressure grid.
-The right axes on April and October show an approximate height using a fixed 7 km scale height.
-Annual cycle: twelve climatological months at exactly 1000, 100, 10 and 1 hPa.
-Monthly time series: original monthly zonal data at the same four pressures;
-both line plots compare tropical, northern/southern midlatitude and northern/southern polar area means.
-The monthly series may span a longer source period than the application climatology and appear only where the source series exists.
-Some 1000 hPa curves are absent where source data do not reach that pressure. No missing values are filled.</p>
-<p class="note">Global maps show geographical monthly fields from the single example year __MAP_YEAR__
-at 1000, 100, 10 and 1 hPa where native pressure permits, or four surface maps for 2D fields.
-These maps are not 1985–2014 climatological means.</p>
+<p class="plot-note" data-note="zonal" hidden>January, April, July and October on the JuMACS application pressure grid.
+The right axes on the April and October panels show an approximate height using a fixed 7 km scale height.</p>
+<p class="plot-note" data-note="timeline" hidden>Original monthly zonal data at exactly 1000, 100, 10 and 1 hPa.
+The curves compare tropical, northern and southern midlatitude, and northern and southern polar area means.
+The time series may span a longer source period than the 1985–2014 application climatology and are shown only
+where the corresponding source series exists. Some 1000 hPa curves may therefore be absent.
+Missing values are not filled.</p>
+<p class="plot-note" data-note="annual" hidden>Twelve climatological months sampled at exactly 1000, 100, 10 and 1 hPa.
+Curves are shown only where the source data reach the requested pressure level. Missing values are not filled.</p>
+<p class="plot-note" data-note="map" hidden>Geographical monthly fields from the single example year __MAP_YEAR__,
+shown for January, April, July and October. For 3D fields, maps are sampled at 1000, 100, 10 and 1 hPa
+where the native pressure grid permits; for 2D fields, four surface maps are shown.
+These maps are examples from one year and are not 1985–2014 climatological means.</p>
 </section></main><section id="inventory-view" hidden><h2>Data availability</h2>
 <p>Application climatologies are zonal means: their spatial axes are pressure × latitude or latitude only.
 Longitude-resolved marks variables whose raw archive provides a geographical longitude × latitude
@@ -405,6 +408,7 @@ function render() {
   if (!current) {
     document.getElementById('title').textContent = 'No matching variable';
     document.getElementById('plot').removeAttribute('src');
+    for (const note of document.querySelectorAll('.plot-note')) note.hidden = true;
     return;
   }
   if (!current.views[view]) view = current.views.zonal ? 'zonal' : Object.keys(current.views)[0];
@@ -424,6 +428,7 @@ function render() {
     tab.disabled = !current.views[tab.dataset.view];
     tab.classList.toggle('active', tab.dataset.view === view);
   }
+  for (const note of document.querySelectorAll('.plot-note')) note.hidden = note.dataset.note !== view;
 }
 model.onchange = () => {
   const canonical = current && current.canonical;
@@ -610,7 +615,7 @@ figure{background:white;border:1px solid var(--line);border-radius:.8rem;margin:
 figure img{display:block;width:100%;max-height:calc(100vh - 220px);object-fit:contain}
 figcaption{display:flex;justify-content:space-between;align-items:center;gap:1rem;color:var(--muted);font-size:.88rem;margin-top:.7rem}
 figcaption span:last-child{display:flex;gap:.4rem;flex-wrap:wrap}
-.note{background:#e9f4f5;border-left:3px solid var(--accent);padding:.65rem .9rem;margin-top:1.3rem;color:#335c69;font-size:.88rem}
+.plot-note{margin:.15rem 0 0;color:#3f6472;font-size:.86rem;max-width:90ch}
 @media(max-width:760px){main{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}
 #variables{display:flex;max-height:none;overflow:auto}.item{white-space:nowrap}.viewer{padding:1rem}figure img{max-height:none}
 .dataset{grid-template-columns:minmax(0,1fr)}}

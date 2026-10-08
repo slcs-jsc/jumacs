@@ -95,6 +95,37 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
     assert (site / "plots/SOCOL/o3_zonal.png").exists()
 
 
+def test_plot_notes_accompany_their_plot_views(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    def placeholder(*args, **kwargs):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    _product(tmp_path)
+    site = build_site(1985, 2014, root=tmp_path)["site"]
+    html = (site / "index.html").read_text()
+    style = (site / "assets" / "style.css").read_text()
+    notes = dict(re.findall(r'<p class="plot-note" data-note="(\w+)"[^>]*>(.*?)</p>', html, re.DOTALL))
+    assert set(notes) == {"zonal", "timeline", "annual", "map"}
+    figure_end, section_end = html.index("</figure>"), html.index("</section></main>")
+    for match in re.finditer(r'<p class="plot-note"', html):
+        assert figure_end < match.start() < section_end
+    assert "January, April, July and October" in notes["zonal"]
+    assert "7 km scale height" in notes["zonal"]
+    for view in ("annual", "timeline"):
+        assert "1000, 100, 10 and 1 hPa" in notes[view]
+        assert "Missing values are not filled" in notes[view]
+    assert "longer source period" in notes["timeline"]
+    assert "single example year 2000" in notes["map"]
+    assert "January, April, July and October" in notes["map"]
+    assert 'class="note"' not in html
+    assert "Cross sections:" not in html and "Monthly time series:" not in html
+    assert "note.dataset.note !== view" in html
+    assert ".plot-note{" in style and ".note{" not in style
+
+
 def test_catalog_keeps_canonical_identity_across_different_native_names():
     from jumacs.browser import _html
 
