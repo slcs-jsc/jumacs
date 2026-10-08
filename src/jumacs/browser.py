@@ -367,12 +367,10 @@ Pressure limits use any finite mean value. Click a column heading to sort (↕);
 <p>Every source dataset JuMACS processes, with its archive, citation identifiers, licence and the volume of
 raw archive data mirrored for the configured reference period. Sizes are decimal units (1 GB = 10^9 bytes)
 of the regular files held under each source directory, so they describe this installation rather than the
-full archive. DOI cells link to a registered DOI where one exists and otherwise to the stable archive
-record; a dataset UUID covers the archive collection or dataset as noted.</p>
-<div class="table-wrap"><table><thead><tr>
-<th>Dataset</th><th>Institution</th><th>Role</th><th>Experiment · member</th><th>Period used</th>
-<th>Source</th><th>DOI / identifier</th><th>License</th><th>Raw data used</th><th>Accessed</th><th>Notes</th>
-</tr></thead><tbody id="provenance-body"></tbody></table></div></section>
+full archive. Identifier links point to a registered DOI where one exists and otherwise to the stable
+archive record; a dataset UUID covers the archive collection or dataset as noted.</p>
+<div id="provenance-list"></div>
+</section>
 <script id="catalog" type="application/json">__CATALOG__</script>
 <script id="inventory-data" type="application/json">__INVENTORY__</script>
 <script id="provenance-data" type="application/json">__PROVENANCE__</script>
@@ -522,28 +520,48 @@ for (const [button, active] of [['atlas-nav', 'atlas'], ['inventory-nav', 'inven
   };
 }
 function renderProvenance() {
-  const body = document.getElementById('provenance-body');
-  body.textContent = '';
+  const list = document.getElementById('provenance-list');
+  list.textContent = '';
   const text = value => value === null || value === undefined || value === '' ? 'unknown' : String(value);
-  for (const row of provenance) {
-    const tr = document.createElement('tr');
-    const experiment = row.member ? `${row.experiment} · ${row.member}` : text(row.experiment);
-    const values = [text(row.dataset), text(row.institution), text(row.role), experiment,
-                    text(row.period_used), text(row.source_archive), null, text(row.license),
-                    text(row.raw_data_used_human), text(row.accessed), row.notes || ''];
-    for (const value of values) {
-      const cell = document.createElement('td');
-      if (value === null) {
-        const identifier = row.doi ? {href: 'https://doi.org/' + row.doi, label: row.doi} :
-          row.persistent_identifier ? {href: row.persistent_identifier, label: row.persistent_identifier} : null;
-        if (identifier) {
-          const link = document.createElement('a');
-          link.href = identifier.href; link.textContent = identifier.label; cell.append(link);
-        } else cell.textContent = 'unknown';
-      } else cell.textContent = value;
-      tr.append(cell);
+  const meta = (term, value) => {
+    const pair = document.createElement('div');
+    const dt = document.createElement('dt'); dt.textContent = term;
+    const dd = document.createElement('dd'); dd.textContent = value;
+    pair.append(dt, dd); return pair;
+  };
+  const sorted = [...provenance].sort((a, b) =>
+    a.role.localeCompare(b.role) || a.dataset.localeCompare(b.dataset));
+  for (const row of sorted) {
+    const card = document.createElement('article'); card.className = 'dataset';
+    const head = document.createElement('div'); head.className = 'dataset-head';
+    const title = document.createElement('h3'); title.textContent = text(row.dataset);
+    const sub = document.createElement('p'); sub.className = 'dataset-sub';
+    sub.textContent = `${text(row.institution)} · ${text(row.role)}`;
+    head.append(title, sub);
+    const dl = document.createElement('dl'); dl.className = 'dataset-meta';
+    dl.append(meta('Experiment · member', row.member ? `${row.experiment} · ${row.member}` : text(row.experiment)));
+    if (row.period_used) dl.append(meta('Period used', text(row.period_used)));
+    if (row.source_archive) dl.append(meta('Source', text(row.source_archive)));
+    if (row.doi || row.persistent_identifier) {
+      const pair = document.createElement('div');
+      const dt = document.createElement('dt'); dt.textContent = 'Identifier';
+      const dd = document.createElement('dd');
+      const link = document.createElement('a');
+      if (row.doi) { link.href = 'https://doi.org/' + row.doi; link.textContent = row.doi; }
+      else {
+        link.href = row.persistent_identifier;
+        const ceda = row.persistent_identifier.includes('catalogue.ceda.ac.uk');
+        const collection = (row.notes || '').includes('collection-level');
+        link.textContent = ceda ? (collection ? 'CEDA collection record' : 'CEDA dataset record')
+                                : 'Source record';
+      }
+      dd.append(link); pair.append(dt, dd); dl.append(pair);
     }
-    body.append(tr);
+    if (row.license) dl.append(meta('License', text(row.license)));
+    if (row.raw_data_used_human) dl.append(meta('Raw data used', text(row.raw_data_used_human)));
+    if (row.accessed) dl.append(meta('Accessed', text(row.accessed)));
+    if (row.notes) dl.append(meta('Notes', row.notes));
+    card.append(head, dl); list.append(card);
   }
 }
 renderProvenance();
@@ -562,6 +580,15 @@ main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;gri
 main[hidden],#inventory-view[hidden],#provenance-view[hidden]{display:none}
 #inventory-view,#provenance-view{max-width:1420px;margin:auto;padding:1.5rem}
 #inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
+#provenance-list{display:grid;gap:.9rem;margin-top:1.1rem}
+.dataset{background:white;border:1px solid var(--line);border-radius:.8rem;padding:1rem 1.2rem;display:grid;grid-template-columns:minmax(11rem,16rem) minmax(0,1fr);gap:.5rem 1.6rem;align-items:start}
+.dataset-head h3{margin:0;font-size:1.05rem}
+.dataset-sub{margin:.25rem 0 0;color:var(--muted);font-size:.85rem}
+.dataset-meta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.3rem 1rem;margin:0}
+.dataset-meta>div{display:contents}
+.dataset-meta dt{color:var(--muted);font-size:.78rem;font-weight:750;text-transform:uppercase;padding-top:.1rem}
+.dataset-meta dd{margin:0;font-size:.9rem;overflow-wrap:anywhere}
+.dataset-meta a{color:var(--accent)}
 table{width:100%;border-collapse:collapse;background:white;font-size:.9rem}
 th,td{padding:.55rem .7rem;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
 th{background:#e9f4f5;position:sticky;top:0}td a{color:#087f89}
@@ -585,7 +612,8 @@ figcaption{display:flex;justify-content:space-between;align-items:center;gap:1re
 figcaption span:last-child{display:flex;gap:.4rem;flex-wrap:wrap}
 .note{background:#e9f4f5;border-left:3px solid var(--accent);padding:.65rem .9rem;margin-top:1.3rem;color:#335c69;font-size:.88rem}
 @media(max-width:760px){main{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}
-#variables{display:flex;max-height:none;overflow:auto}.item{white-space:nowrap}.viewer{padding:1rem}figure img{max-height:none}}
+#variables{display:flex;max-height:none;overflow:auto}.item{white-space:nowrap}.viewer{padding:1rem}figure img{max-height:none}
+.dataset{grid-template-columns:minmax(0,1fr)}}
 """
 
 

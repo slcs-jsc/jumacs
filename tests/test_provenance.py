@@ -73,6 +73,9 @@ def test_provenance_page_in_site(tmp_path, monkeypatch):
     html = (report["site"] / "index.html").read_text()
     assert "Data provenance" in html and 'id="provenance-view"' in html
     assert 'id="provenance-nav"' in html
+    assert 'id="provenance-list"' in html
+    assert 'createElement(\'article\')' in html
+    assert "provenance-body" not in html and "<th>Dataset</th>" not in html
     embedded = json.loads(re.search(
         r'<script id="provenance-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
     datasets = {row["dataset"] for row in embedded}
