@@ -352,7 +352,7 @@ HTML_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JuMACS · Climatology atlas</title><link rel="stylesheet" href="assets/style.css"></head>
 <body><header><h1>JuMACS climatology atlas</h1>
-<p>Model climatologies on the shared pressure grid · __PERIOD__</p>
+<p>JuMACS v0.1 · Initial public release · Harmonized multi-source model climatologies</p>
 <nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button>
 <button id="provenance-nav">Data provenance</button><button id="about-nav">About &amp; contact</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
@@ -415,10 +415,13 @@ particular for use with atmospheric modelling and radiative-transfer tools such 
 <p>The project provides native-model climatologies, harmonized application products, diagnostic visualizations, and
 detailed source-data provenance. Original source datasets remain subject to their respective licences and citation
 requirements.</p>
+<p>JuMACS is under active development. Version 0.1 represents the initial public release of the current model-based
+climatologies, application products, diagnostic atlas, and source-data provenance. Additional datasets, evaluation
+results, and functionality may be added in future releases.</p>
 <h2>Contact</h2>
 <p>Dr. Lars Hoffmann<br>Jülich Supercomputing Centre (JSC)<br>Forschungszentrum Jülich<br>Germany<br>
 <a href="mailto:l.hoffmann@fz-juelich.de">l.hoffmann@fz-juelich.de</a></p>
-<p>We welcome feedback and are happy to discuss scientific collaborations and additional applications of JuMACS.</p>
+<p>Feedback and scientific collaboration are very welcome.</p>
 <p>Source code: <a href="https://github.com/slcs-jsc/jumacs">https://github.com/slcs-jsc/jumacs</a></p>
 </section>
 <script id="catalog" type="application/json">__CATALOG__</script>
@@ -797,6 +800,18 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
                 entry["application_product"] = None
             entry["map_plot"] = maps.get((row["model"], row["native_variable"]))
             site_inventory.append(entry)
+        published_native = set()
+        for row in site_inventory:
+            rel = row.get("native_product")
+            if not rel or rel in published_native:
+                continue
+            source = root / rel
+            if not source.is_file():
+                continue
+            target = staging / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            published_native.add(rel)
         (staging / "index.html").write_text(
             _html(records, start_year, end_year, site_inventory, provenance["sources"]), encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
@@ -815,11 +830,19 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
         elif application.exists() or application.is_symlink():
             application.unlink()
         (staging / "products" / "application").replace(application)
+        climatology = site / "products" / "climatology"
+        staged_climatology = staging / "products" / "climatology"
+        if climatology.is_dir() and not climatology.is_symlink():
+            shutil.rmtree(climatology)
+        elif climatology.exists() or climatology.is_symlink():
+            climatology.unlink()
+        if staged_climatology.exists():
+            staged_climatology.replace(climatology)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return {"site": site, "models": [name for name, _, _ in records],
             "provenance_sources": len(provenance["sources"]),
             "variables": {name: len(fields) for name, _, fields in records},
             "png_files": sum(len(field["views"]) for _, _, fields in records for field in fields),
-            "netcdf_files": len(records), "skipped": skipped,
+            "netcdf_files": len(records), "climatology_files": len(published_native), "skipped": skipped,
             "timeline_skipped": timeline_skipped, "map_skipped": map_skipped}

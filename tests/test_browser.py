@@ -205,6 +205,24 @@ def test_about_and_contact_view(tmp_path, monkeypatch):
     assert 'href="https://github.com/slcs-jsc/jumacs"' in html
 
 
+def test_v01_release_header_and_development_disclaimer(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
+    assert ("<p>JuMACS v0.1 · Initial public release · "
+            "Harmonized multi-source model climatologies</p>") in html
+    assert "Model climatologies on the shared pressure grid" not in html
+    assert "JuMACS is under active development" in html
+    assert "Version 0.1 represents the initial public release" in html
+    assert "Feedback and scientific collaboration are very welcome." in html
+    assert "Jülich Multi-source Atmospheric Climatology and Statistics" in html
+    assert "Climatology System" not in html
+    assert "1985–2014" in html  # period stays documented outside the header line
+
+
 def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):
     _product(tmp_path, model="CMAM")
     _product(tmp_path, model="SOCOL")
@@ -215,6 +233,34 @@ def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):
         assert (report["site"] / f"plots/{model}/ta_zonal.png").stat().st_size > 1000
         assert (report["site"] / f"plots/{model}/ta_annual.png").stat().st_size > 1000
         assert (report["site"] / f"products/application/{model}/jumacs_{model.lower()}_application_climatology_1985-2014.nc").exists()
+
+
+def test_native_climatology_downloads_are_published(tmp_path, monkeypatch):
+    from jumacs import browser
+    from jumacs.climatology import product_name
+
+    def placeholder(*args, **kwargs):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    _product(tmp_path)
+    native = tmp_path / "products" / "climatology" / "SOCOL" / product_name("SOCOL", 1985, 2014)
+    native.parent.mkdir(parents=True)
+    xr.Dataset({"ta_mean": (("pressure", "lat"), np.ones((4, 3)), {"units": "K"})},
+               coords={"pressure": [10000., 1000., 100., 10.],
+                       "lat": [-62.5, 2.5, 57.5]}).to_netcdf(native)
+    report = build_site(1985, 2014, root=tmp_path)
+    published = report["site"] / native.relative_to(tmp_path)
+    assert report["climatology_files"] == 1
+    assert published.is_file() and published.read_bytes() == native.read_bytes()
+    html = (report["site"] / "index.html").read_text()
+    inventory = json.loads(re.search(
+        r'<script id="inventory-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
+    assert any(row["native_product"] for row in inventory)
+    for row in inventory:
+        if row["native_product"]:
+            assert (report["site"] / row["native_product"]).is_file()
 
 
 def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
