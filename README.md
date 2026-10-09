@@ -1,6 +1,6 @@
 # JuMACS
 
-**Jülich Multi-source Atmospheric Climatology System** provides monthly zonal atmospheric reference climatologies derived from internally consistent chemistry-climate simulations. The default is **1985–2014 inclusive** (30 years), with `nominal_reference_year=2000` as an epoch label. It does not equate trend-sensitive concentrations with year-2000 abundances; it applies no detrending, normalization, bias correction, satellite adjustment, model weighting, or ensemble averaging.
+**Jülich Multi-source Atmospheric Climatology and Statistics** provides monthly zonal atmospheric reference climatologies derived from internally consistent chemistry-climate simulations. The default is **1985–2014 inclusive** (30 years), with `nominal_reference_year=2000` as an epoch label. It does not equate trend-sensitive concentrations with year-2000 abundances; it applies no detrending, normalization, bias correction, satellite adjustment, model weighting, or ensemble averaging.
 
 ```text
 CCMI refD1 ──→ monthly zonal series ──→ native climatology ──→ application-grid remap ──→ application NetCDF

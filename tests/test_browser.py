@@ -12,6 +12,7 @@ from jumacs.browser import (
     PLOT_PRESSURES_HPA,
     ZONAL_MONTHS,
     _band_samples,
+    _display_name,
     _display_scale,
     _height_to_pressure,
     _map_values,
@@ -80,7 +81,7 @@ def test_site_links_and_regeneration(tmp_path, monkeypatch):
         assert not Path(link).is_absolute() and "://" not in link
         assert (site / link).is_file()
     for link in re.findall(r'(?:href|src)="([^"]+)"', html):
-        if link.startswith("#"):
+        if link.startswith(("#", "mailto:")) or "://" in link:
             continue
         assert not Path(link).is_absolute() and "://" not in link
         assert (site / link).is_file()
@@ -137,6 +138,71 @@ def test_catalog_keeps_canonical_identity_across_different_native_names():
                                    html, re.DOTALL).group(1))
     assert [row["variable"] for row in catalog] == ["ta", "T"]
     assert [row["canonical"] for row in catalog] == ["temperature", "temperature"]
+    assert [row["display"] for row in catalog] == ["Temperature", "Temperature"]
+
+
+def test_display_names_are_public_scientific_labels():
+    assert _display_name("surface_pressure") == "Surface pressure"
+    assert _display_name("mean_age") == "Mean age"
+    assert _display_name("O3_strat") == "Stratospheric ozone"
+    assert _display_name("tropospheric_ozone_column") == "Tropospheric ozone column"
+    assert _display_name("tropopause_pressure") == "Tropopause pressure"
+    assert _display_name("tropopause_temperature") == "Tropopause temperature"
+    assert _display_name("tropopause_altitude") == "Tropopause altitude"
+    assert _display_name("geopotential_height") == "Geopotential height"
+    assert _display_name("zonal_wind") == "Zonal wind"
+    assert _display_name("meridional_wind") == "Meridional wind"
+    assert _display_name("total_ozone_column") == "Total ozone column"
+    assert _display_name("EP_flux_meridional") == "Meridional EP flux"
+    assert _display_name("EP_flux_vertical") == "Vertical EP flux"
+    assert _display_name("TEM_meridional_wind") == "TEM meridional wind"
+    assert _display_name("TEM_vertical_velocity") == "TEM vertical velocity"
+    assert _display_name("sulfate_SAD") == "Sulfate aerosol surface area density"
+    assert _display_name("PSC_NAT_SAD") == "PSC nitric acid surface area density"
+    assert _display_name("PSC_ice_SAD") == "PSC ice surface area density"
+    for formula in ("O3", "H2O", "CH4", "N2O", "CO", "CO2", "NO", "NO2", "HCl", "CFC-11", "CFC-12"):
+        assert _display_name(formula) == formula
+
+
+def test_variable_selector_shows_display_names_without_native_aliases(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    site = build_site(1985, 2014, root=tmp_path)["site"]
+    html = (site / "index.html").read_text()
+    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
+                                   html, re.DOTALL).group(1))
+    assert catalog[0]["display"] == "Temperature"
+    assert catalog[0]["variable"] == "ta" and catalog[0]["canonical"] == "temperature"
+    assert "button.textContent = row.display;" in html
+    assert "row.label + ' · ' + row.variable" not in html
+    assert "current.model + ' · ' + current.display" in html
+    assert "row.model === model.value && row.canonical === canonical" in html
+
+
+def test_about_and_contact_view(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    site = build_site(1985, 2014, root=tmp_path)["site"]
+    html = (site / "index.html").read_text()
+    style = (site / "assets" / "style.css").read_text()
+    assert '<button id="about-nav">About &amp; contact</button>' in html
+    assert '<section id="about-view" hidden>' in html
+    assert "['about-nav', 'about-view']" in html
+    assert "#about-view[hidden]{display:none}" in style
+    assert "Jülich Multi-source Atmospheric Climatology and Statistics" in html
+    assert "Climatology System" not in html
+    assert "JURASSIC and MPTRAC" in html
+    assert "Dr. Lars Hoffmann" in html
+    assert "Jülich Supercomputing Centre (JSC)" in html
+    assert "Forschungszentrum Jülich" in html
+    assert 'href="mailto:l.hoffmann@fz-juelich.de"' in html
+    assert 'href="https://github.com/slcs-jsc/jumacs"' in html
 
 
 def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):

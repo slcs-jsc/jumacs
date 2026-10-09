@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "Please cite JuMACS and the underlying model datasets when using these products."
-title: "JuMACS: Jülich Multi-source Atmospheric Climatology System"
+title: "JuMACS: Jülich Multi-source Atmospheric Climatology and Statistics"
 type: software
 authors:
   - name: JuMACS contributors

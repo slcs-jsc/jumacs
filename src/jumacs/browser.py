@@ -27,6 +27,37 @@ PLOT_LATITUDE_NAMES = ("Polar South (90–65°S)", "Midlatitudes South (65–20�
                        "Polar North (65–90°N)")
 PLOT_LATITUDE_CENTERS = tuple((south + north) / 2 for south, north in pairwise(PLOT_LATITUDE_EDGES))
 
+VARIABLE_DISPLAY_NAMES = {
+    "surface_pressure": "Surface pressure",
+    "temperature": "Temperature",
+    "geopotential_height": "Geopotential height",
+    "zonal_wind": "Zonal wind",
+    "meridional_wind": "Meridional wind",
+    "mean_age": "Mean age",
+    "total_ozone_column": "Total ozone column",
+    "tropospheric_ozone_column": "Tropospheric ozone column",
+    "O3_strat": "Stratospheric ozone",
+    "tropopause_pressure": "Tropopause pressure",
+    "tropopause_temperature": "Tropopause temperature",
+    "tropopause_altitude": "Tropopause altitude",
+    "EP_flux_meridional": "Meridional EP flux",
+    "EP_flux_vertical": "Vertical EP flux",
+    "TEM_meridional_wind": "TEM meridional wind",
+    "TEM_vertical_velocity": "TEM vertical velocity",
+    "sulfate_SAD": "Sulfate aerosol surface area density",
+    "PSC_NAT_SAD": "PSC nitric acid surface area density",
+    "PSC_ice_SAD": "PSC ice surface area density",
+}
+
+
+def _display_name(canonical):
+    """Public scientific label for a canonical variable (display-only)."""
+    mapped = VARIABLE_DISPLAY_NAMES.get(canonical)
+    if mapped is not None:
+        return mapped
+    spaced = canonical.replace("_", " ")
+    return spaced[:1].upper() + spaced[1:]
+
 
 def discover_application_products(root, start_year, end_year, model=None):
     """Return existing application products for the requested period."""
@@ -303,7 +334,8 @@ def _html(records, start_year, end_year, inventory_rows, provenance_rows=()):
     for model, product, fields in records:
         for field in fields:
             catalog.append({"model": model, "variable": field["native"],
-                            "canonical": field["canonical"], "label": field["label"], "units": field["units"],
+                            "canonical": field["canonical"], "label": field["label"],
+                            "display": _display_name(field["canonical"]), "units": field["units"],
                             "product": f"products/application/{model}/{product.name}",
                             "views": {name: path.as_posix() for name, path in field["views"].items()}})
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
@@ -322,7 +354,7 @@ HTML_TEMPLATE = """<!doctype html>
 <body><header><h1>JuMACS climatology atlas</h1>
 <p>Model climatologies on the shared pressure grid · __PERIOD__</p>
 <nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button>
-<button id="provenance-nav">Data provenance</button></nav></header>
+<button id="provenance-nav">Data provenance</button><button id="about-nav">About &amp; contact</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
 <label for="search">Variable</label><input id="search" type="search" placeholder="Search variable name">
 <div id="variables" aria-label="Available variables"></div></aside>
@@ -374,6 +406,21 @@ full archive. Identifier links point to a registered DOI where one exists and ot
 archive record; a dataset UUID covers the archive collection or dataset as noted.</p>
 <div id="provenance-list"></div>
 </section>
+<section id="about-view" hidden><h2>About JuMACS</h2>
+<p>JuMACS — the Jülich Multi-source Atmospheric Climatology and Statistics — provides reproducible monthly
+atmospheric climatologies and associated statistics for scientific applications.</p>
+<p>JuMACS combines published chemistry–climate model data from multiple sources on a common application grid while
+preserving the individual source-model climatologies and their provenance. The current products are designed in
+particular for use with atmospheric modelling and radiative-transfer tools such as JURASSIC and MPTRAC.</p>
+<p>The project provides native-model climatologies, harmonized application products, diagnostic visualizations, and
+detailed source-data provenance. Original source datasets remain subject to their respective licences and citation
+requirements.</p>
+<h2>Contact</h2>
+<p>Dr. Lars Hoffmann<br>Jülich Supercomputing Centre (JSC)<br>Forschungszentrum Jülich<br>Germany<br>
+<a href="mailto:l.hoffmann@fz-juelich.de">l.hoffmann@fz-juelich.de</a></p>
+<p>We welcome feedback and are happy to discuss scientific collaborations and additional applications of JuMACS.</p>
+<p>Source code: <a href="https://github.com/slcs-jsc/jumacs">https://github.com/slcs-jsc/jumacs</a></p>
+</section>
 <script id="catalog" type="application/json">__CATALOG__</script>
 <script id="inventory-data" type="application/json">__INVENTORY__</script>
 <script id="provenance-data" type="application/json">__PROVENANCE__</script>
@@ -391,7 +438,7 @@ let current = null, view = 'zonal';
 function available() {
   const query = search.value.toLowerCase();
   return catalog.filter(row => row.model === model.value &&
-    (row.label + ' ' + row.variable).toLowerCase().includes(query));
+    (row.display + ' ' + row.canonical + ' ' + row.variable).toLowerCase().includes(query));
 }
 function render() {
   const rows = available();
@@ -400,8 +447,7 @@ function render() {
   for (const row of rows) {
     const button = document.createElement('button');
     button.className = 'item' + (row === current ? ' active' : '');
-    button.textContent = row.label.toLowerCase() === row.variable.toLowerCase()
-      ? row.label : row.label + ' · ' + row.variable;
+    button.textContent = row.display;
     button.onclick = () => { current = row; render(); };
     list.append(button);
   }
@@ -412,11 +458,11 @@ function render() {
     return;
   }
   if (!current.views[view]) view = current.views.zonal ? 'zonal' : Object.keys(current.views)[0];
-  document.getElementById('title').textContent = current.model + ' · ' + current.label;
-  document.getElementById('meta').textContent = current.variable + ' · ' + current.units + ' · __PERIOD__';
+  document.getElementById('title').textContent = current.model + ' · ' + current.display;
+  document.getElementById('meta').textContent = current.canonical + ' · ' + current.units + ' · __PERIOD__';
   const image = document.getElementById('plot');
   image.src = current.views[view];
-  image.alt = current.model + ' ' + current.label + ' ' + view;
+  image.alt = current.model + ' ' + current.display + ' ' + view;
   document.getElementById('png').href = current.views[view];
   document.getElementById('product').href = current.product;
   document.getElementById('caption').textContent = {
@@ -514,13 +560,12 @@ for (const button of document.querySelectorAll('.sort-button')) {
   button.setAttribute('aria-label', label + ', sortable');
 }
 document.querySelector('.sort-button[data-sort="model"]').click();
-const shown = ['atlas', 'inventory-view', 'provenance-view'];
-for (const [button, active] of [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
-                                ['provenance-nav', 'provenance-view']]) {
+const views = [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
+               ['provenance-nav', 'provenance-view'], ['about-nav', 'about-view']];
+for (const [button, active] of views) {
   document.getElementById(button).onclick = () => {
-    for (const id of shown) document.getElementById(id).hidden = id !== active;
-    for (const [name, target] of [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
-                                  ['provenance-nav', 'provenance-view']])
+    for (const [, id] of views) document.getElementById(id).hidden = id !== active;
+    for (const [name, target] of views)
       document.getElementById(name).classList.toggle('active', target === active);
   };
 }
@@ -582,8 +627,12 @@ header{background:#12364b;color:white;padding:1.2rem max(1.5rem,calc((100vw - 14
 header h1{margin:0;font-size:1.6rem}header p{margin:.3rem 0 0;color:#cee2e9;font-size:.92rem}
 header nav{display:flex;gap:.5rem;margin-top:.7rem}header nav button.active{background:var(--accent);color:white}
 main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr)}
-main[hidden],#inventory-view[hidden],#provenance-view[hidden]{display:none}
-#inventory-view,#provenance-view{max-width:1420px;margin:auto;padding:1.5rem}
+main[hidden],#inventory-view[hidden],#provenance-view[hidden],#about-view[hidden]{display:none}
+#inventory-view,#provenance-view,#about-view{max-width:1420px;margin:auto;padding:1.5rem}
+#about-view{max-width:60rem}
+#about-view p{max-width:75ch}
+#about-view h2:not(:first-child){margin-top:1.6rem}
+#about-view a{color:var(--accent)}
 #inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
 #provenance-list{display:grid;gap:.9rem;margin-top:1.1rem}
 .dataset{background:white;border:1px solid var(--line);border-radius:.8rem;padding:1rem 1.2rem;display:grid;grid-template-columns:minmax(11rem,16rem) minmax(0,1fr);gap:.5rem 1.6rem;align-items:start}
