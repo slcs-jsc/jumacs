@@ -19,7 +19,7 @@ capabilities:
   download: true
   zonal_processing: true
   climatology: true
-  compact_waccmx: false
+  compact_waccmx: true
 paths: {raw: data/raw/IPSL-CM6A-ATM-LR-REPROBUS/refD1, zonal: data/processed/IPSL-CM6A-ATM-LR-REPROBUS/refD1, climatology: products/climatology/IPSL-CM6A-ATM-LR-REPROBUS}
 coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
 variables:

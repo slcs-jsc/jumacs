@@ -20,7 +20,7 @@ capabilities:
   download: true
   zonal_processing: true
   climatology: true
-  compact_waccmx: false
+  compact_waccmx: true
 paths: {raw: data/raw/CCSR-NIES-MIROC32/refD1, zonal: data/processed/CCSR-NIES-MIROC32/refD1, climatology: products/climatology/CCSR-NIES-MIROC32}
 coordinates: {latitude: lat, longitude: lon, level: lev, pressure: lev}
 squeeze_singleton_level: true # Amon surface/column fields carry a spurious lev=1 axis.

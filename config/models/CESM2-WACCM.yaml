@@ -24,7 +24,7 @@ capabilities:
   download: true
   zonal_processing: true
   climatology: true
-  compact_waccmx: false
+  compact_waccmx: true
 paths: {raw: data/raw/CESM2-WACCM/refD1, zonal: data/processed/CESM2-WACCM/refD1, climatology: products/climatology/CESM2-WACCM}
 coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
 # All mapped 3D fields except CO2, C2H2 and C2H6 are published on AmonZ pressure levels (39 levels, 100000-3 Pa,

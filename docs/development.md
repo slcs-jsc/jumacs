@@ -46,8 +46,7 @@ sbatch -A YOUR_ACCOUNT scripts/slurm/build.sh EMAC 1985 2014
 sbatch -A YOUR_ACCOUNT scripts/slurm/compare.sh 1985 2014
 sbatch -A YOUR_ACCOUNT scripts/slurm/plot_catalog.sh
 sbatch -A YOUR_ACCOUNT scripts/slurm/plot_comparisons.sh
-sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh GEOSCCM
-sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh EMAC
+sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh all
 ```
 
 `scripts/slurm/build.sh` is the normal submission path because it wraps `jumacs build`: it reuses existing monthly zonal intermediates, builds only what is missing, and validates the climatology afterwards. The per-stage wrappers (`scripts/slurm/zonal_model.sh`, `zonal_array.sh`, `climatology.sh`, `submit_processing.py`) and the matching `jumacs zonal` / `jumacs climatology` commands, `make zonal MODEL=...` and `make climatology MODEL=...` are advanced entry points for re-running one stage after a failed build or for debugging a single variable; running `climatology.sh` alone skips the coverage checks that `build` performs.

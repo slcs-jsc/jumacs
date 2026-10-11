@@ -11,4 +11,4 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 period=()
 [[ -z ${2:-} ]] || period+=(--start-year "$2")
 [[ -z ${3:-} ]] || period+=(--end-year "$3")
-python3 -m jumacs.cli compact --model "${1:?GEOSCCM or EMAC required}" ${period[@]+"${period[@]}"}
+python3 -m jumacs.cli compact --model "${1:?MODEL or all required}" ${period[@]+"${period[@]}"}

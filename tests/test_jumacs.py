@@ -195,29 +195,62 @@ def test_native_variable_report_separates_mapped_and_native_only(tmp_path, monke
 
 
 def test_capabilities_gate_commands():
-    from jumacs.config import models_with_capability, has_capability
+    from jumacs.config import models_with_capability, has_capability, ready_ccmi_model_names
     from jumacs.build import buildable_model_names
-    assert set(models_with_capability("compact_waccmx")) == {"GEOSCCM", "EMAC"}
+    assert set(models_with_capability("compact_waccmx")) == set(ready_ccmi_model_names())
+    assert "WACCM-X" not in models_with_capability("compact_waccmx")
     assert has_capability("WACCM-X", "zonal_processing") and not has_capability("WACCM-X", "compact_waccmx")
     assert set(models_with_capability("archive_inventory")) == {
         "GEOSCCM", "EMAC", "WACCM-X", "CCSR-NIES-MIROC32", "CESM2-WACCM", "CMAM",
         "CNRM-MOCAGE", "IPSL-CM6A-ATM-LR-REPROBUS", "SOCOL"}
-    assert {"GEOSCCM", "EMAC", "WACCM-X", "CMAM", "CNRM-MOCAGE", "SOCOL"} <= set(buildable_model_names())
+    assert {"GEOSCCM", "EMAC", "CMAM", "CNRM-MOCAGE", "SOCOL"} <= set(buildable_model_names())
     assert "MIROC-ES2H" not in buildable_model_names()
     assert not any(has_capability("MIROC-ES2H", cap) for cap in
                    ("archive_inventory", "download", "zonal_processing", "climatology", "compact_waccmx"))
     for stub in ("SOCOL", "CMAM"):
         assert has_capability(stub, "archive_inventory") and has_capability(stub, "download")
-        assert not has_capability(stub, "compact_waccmx")
+        assert has_capability(stub, "compact_waccmx")
 
 
 def test_compact_rejects_models_without_capability():
     import pytest
     from jumacs.compact import build_compact
     with pytest.raises(ValueError, match="not registered for compact"):
-        build_compact("SOCOL")
+        build_compact("MIROC-ES2H")
     with pytest.raises(ValueError, match="not registered for compact"):
         build_compact("WACCM-X")
+
+
+def test_compact_writer_covers_models_beyond_emac_geosccm(tmp_path, monkeypatch):
+    import numpy as np
+    import xarray as xr
+    from jumacs import compact
+
+    def synthetic_read(model, canonical, start_year, end_year):
+        if canonical not in ("geopotential_height", "O3"):
+            return None
+        levels = np.linspace(1.0, 90.0 if model != "WACCM-X" else 150.0, 40)
+        base = levels * 1000.0 if canonical == "geopotential_height" else np.full(levels.shape, 1e-5)
+        field = xr.DataArray(
+            np.broadcast_to(base.reshape(1, 40, 1), (12, 40, 36)),
+            dims=("month", "lev", "lat"),
+            coords={"month": np.arange(1, 13), "lev": np.arange(40, dtype="float64"),
+                    "lat": np.arange(-87.5, 88.0, 5.0)},
+            attrs={"units": "mol mol-1" if canonical == "O3" else "gpm"})
+        ds = xr.Dataset({"mean": field})
+        ds.attrs["output_units"] = field.attrs["units"]
+        return ds
+
+    monkeypatch.setattr(compact, "_read", synthetic_read)
+    monkeypatch.setattr(compact, "ROOT", tmp_path)
+    for model in ("SOCOL", "CMAM", "EMAC"):
+        dest = compact.build_compact(model)
+        assert dest.name == f"jumacs_{model.lower()}_waccmx_1985-2014_5deg_1km.nc"
+        with xr.open_dataset(dest) as ds:
+            assert ds.attrs["lower_model"] == model
+            assert set(ds.dims.values()) == {12, 121, 35}
+            assert ds["o3"].attrs["source_status"] == "lower_model_to_waccmx"
+            assert np.isfinite(ds["o3"].values[:, 55:66, :]).all()
 
 
 def test_model_period_defaults_to_reference_configuration():

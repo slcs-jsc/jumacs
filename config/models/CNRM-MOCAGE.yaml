@@ -19,7 +19,7 @@ capabilities:
   download: true
   zonal_processing: true
   climatology: true
-  compact_waccmx: false
+  compact_waccmx: true
 paths: {raw: data/raw/CNRM-MOCAGE/refD1, zonal: data/processed/CNRM-MOCAGE/refD1, climatology: products/climatology/CNRM-MOCAGE}
 coordinates: {latitude: lat, longitude: lon, level: lev, surface_pressure: ps, pressure: plev, hybrid_a: a, hybrid_b: b, reference_pressure: p0}
 variables:
