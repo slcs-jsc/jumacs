@@ -1,9 +1,11 @@
 """Generate a self-contained static browser for application climatologies."""
 
 import json
+import os
 import re
 import shutil
 from concurrent.futures import ProcessPoolExecutor
+from html import escape
 from itertools import pairwise
 from multiprocessing import get_context
 from pathlib import Path
@@ -329,7 +331,23 @@ def _plot_annual(field, model, label, units, path, *, scale=1.0):
                       "Annual cycle", "Month", path)
 
 
-def _html(records, start_year, end_year, inventory_rows, provenance_rows=()):
+COMBINED_NAME = re.compile(
+    r"jumacs_(?P<model>[a-z0-9-]+?)_waccmx_(?P<start>\d{4})-(?P<end>\d{4})"
+    r"_(?P<latitude>\d+)deg_(?P<altitude>\d+)km\.nc")
+
+
+def _combined_item(name, base):
+    match = COMBINED_NAME.fullmatch(name)
+    if match:
+        label = (f"{match['model'].upper()} → WACCM-X · {match['start']}–{match['end']} · "
+                 f"{match['latitude']}° latitude × {match['altitude']} km altitude")
+    else:
+        label = name
+    href = escape(f"{base.rstrip('/')}/{name}", quote=True)
+    return f'<li><a href="{href}" download>{escape(label)}</a> <code>{escape(name)}</code></li>'
+
+
+def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), combined_files=()):
     catalog = []
     for model, product, fields in records:
         for field in fields:
@@ -341,11 +359,15 @@ def _html(records, start_year, end_year, inventory_rows, provenance_rows=()):
     payload = json.dumps(catalog, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     inventory_payload = json.dumps(inventory_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     provenance_payload = json.dumps(provenance_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
+    base = os.environ.get("JUMACS_PRODUCT_URL_BASE", "").strip() or "products/combined"
+    combined_html = "".join(_combined_item(name, base) for name in combined_files) \
+        or "<li>No combined products are published for this period yet.</li>"
     year = config.reference_period()["reference_period"]["nominal_reference_year"]
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
             .replace("__MAP_YEAR__", str(year))
             .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload)
-            .replace("__PROVENANCE__", provenance_payload))
+            .replace("__PROVENANCE__", provenance_payload)
+            .replace("__COMBINED__", combined_html))
 
 
 HTML_TEMPLATE = """<!doctype html>
@@ -354,7 +376,8 @@ HTML_TEMPLATE = """<!doctype html>
 <body><header><h1>JuMACS climatology atlas</h1>
 <p>JuMACS v0.1 · Initial public release · Harmonized multi-source model climatologies</p>
 <nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button>
-<button id="provenance-nav">Data provenance</button><button id="about-nav">About &amp; contact</button></nav></header>
+<button id="combined-nav">Products</button><button id="provenance-nav">Data provenance</button>
+<button id="about-nav">About &amp; contact</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
 <label for="search">Variable</label><input id="search" type="search" placeholder="Search variable name">
 <div id="variables" aria-label="Available variables"></div></aside>
@@ -406,6 +429,11 @@ full archive. Identifier links point to a registered DOI where one exists and ot
 archive record; a dataset UUID covers the archive collection or dataset as noted.</p>
 <div id="provenance-list"></div>
 </section>
+<section id="combined-view" hidden><h2>Combined climatology products</h2>
+<p>Combined JuMACS climatology products merge a source model with WACCM-X into one harmonized file on a common
+altitude grid (monthly × geopotential height × latitude), intended for direct use in applications such as
+JURASSIC and MPTRAC. Native and application products remain available through the plot and data-availability views.</p>
+<ul>__COMBINED__</ul></section>
 <section id="about-view" hidden><h2>About JuMACS</h2>
 <p>JuMACS — the Jülich Multi-source Atmospheric Climatology and Statistics — provides reproducible monthly
 atmospheric climatologies and associated statistics for scientific applications.</p>
@@ -564,7 +592,8 @@ for (const button of document.querySelectorAll('.sort-button')) {
 }
 document.querySelector('.sort-button[data-sort="model"]').click();
 const views = [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
-               ['provenance-nav', 'provenance-view'], ['about-nav', 'about-view']];
+               ['combined-nav', 'combined-view'], ['provenance-nav', 'provenance-view'],
+               ['about-nav', 'about-view']];
 for (const [button, active] of views) {
   document.getElementById(button).onclick = () => {
     for (const [, id] of views) document.getElementById(id).hidden = id !== active;
@@ -812,8 +841,19 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             published_native.add(rel)
+        combined_files = []
+        combined_source = root / "products" / "climatology" / "combined"
+        if combined_source.is_dir():
+            target_dir = staging / "products" / "combined"
+            for source in sorted(combined_source.glob("*.nc")):
+                if model is not None and model.lower() not in source.name.lower():
+                    continue
+                target_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target_dir / source.name)
+                combined_files.append(source.name)
         (staging / "index.html").write_text(
-            _html(records, start_year, end_year, site_inventory, provenance["sources"]), encoding="utf-8")
+            _html(records, start_year, end_year, site_inventory, provenance["sources"], combined_files),
+            encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
             old = site / name
             if old.is_dir() and not old.is_symlink():
@@ -838,11 +878,20 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             climatology.unlink()
         if staged_climatology.exists():
             staged_climatology.replace(climatology)
+        published_combined = site / "products" / "combined"
+        staged_combined = staging / "products" / "combined"
+        if published_combined.is_dir() and not published_combined.is_symlink():
+            shutil.rmtree(published_combined)
+        elif published_combined.exists() or published_combined.is_symlink():
+            published_combined.unlink()
+        if staged_combined.exists():
+            staged_combined.replace(published_combined)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return {"site": site, "models": [name for name, _, _ in records],
             "provenance_sources": len(provenance["sources"]),
             "variables": {name: len(fields) for name, _, fields in records},
             "png_files": sum(len(field["views"]) for _, _, fields in records for field in fields),
-            "netcdf_files": len(records), "climatology_files": len(published_native), "skipped": skipped,
+            "netcdf_files": len(records), "climatology_files": len(published_native),
+            "combined_files": combined_files, "skipped": skipped,
             "timeline_skipped": timeline_skipped, "map_skipped": map_skipped}

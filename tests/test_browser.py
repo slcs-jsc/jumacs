@@ -263,6 +263,40 @@ def test_native_climatology_downloads_are_published(tmp_path, monkeypatch):
             assert (report["site"] / row["native_product"]).is_file()
 
 
+def test_combined_products_are_published_and_linked(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    def placeholder(*args, **kwargs):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
+    _product(tmp_path)
+    combined = tmp_path / "products" / "climatology" / "combined"
+    combined.mkdir(parents=True)
+    names = ("jumacs_emac_waccmx_1985-2014_5deg_1km.nc", "jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc")
+    for name in names:
+        (combined / name).write_bytes(b"combined")
+    report = build_site(1985, 2014, root=tmp_path)
+    assert sorted(report["combined_files"]) == list(names)
+    html = (report["site"] / "index.html").read_text()
+    assert "Combined climatology products" in html
+    for name in names:
+        published = report["site"] / "products" / "combined" / name
+        assert published.is_file() and published.read_bytes() == b"combined"
+        assert f'href="products/combined/{name}"' in html
+    assert "EMAC → WACCM-X · 1985–2014 · 5° latitude × 1 km altitude" in html
+
+
+def test_combined_links_honor_product_url_base(monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setenv("JUMACS_PRODUCT_URL_BASE", "https://example.org/data/")
+    html = browser._html([], 1985, 2014, [], (), ["jumacs_emac_waccmx_1985-2014_5deg_1km.nc"])
+    assert 'href="https://example.org/data/jumacs_emac_waccmx_1985-2014_5deg_1km.nc"' in html
+
+
 def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
     from jumacs import browser
 

@@ -18,17 +18,14 @@ def build_index():
     template = (ROOT / "scripts/index_template.html").read_text()
     payload = json.dumps(catalog, ensure_ascii=False).replace("</", "<\\/")
     destination = ROOT / "site/index.html"
-    base = os.environ.get("JUMACS_PRODUCT_URL_BASE", "").strip()
-    if base:
-        links = "Compact application files: " + " and ".join(
-            f'<a href="{escape(base.rstrip("/") + "/" + filename, quote=True)}">{label}</a>'
-            for label, filename in (
-                ("GEOSCCM→WACCM-X", "jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc"),
-                ("EMAC→WACCM-X", "jumacs_emac_waccmx_1985-2014_5deg_1km.nc"),
-            )
-        ) + "."
-    else:
-        links = "Compact NetCDF products are stored separately under products/climatology/combined."
+    base = os.environ.get("JUMACS_PRODUCT_URL_BASE", "").strip() or "products/combined"
+    links = "Compact application files: " + " and ".join(
+        f'<a href="{escape(base.rstrip("/") + "/" + filename, quote=True)}">{label}</a>'
+        for label, filename in (
+            ("GEOSCCM→WACCM-X", "jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc"),
+            ("EMAC→WACCM-X", "jumacs_emac_waccmx_1985-2014_5deg_1km.nc"),
+        )
+    ) + "."
     destination.write_text(template.replace("__JUMACS_CATALOG__", payload).replace("__JUMACS_DATA_LINKS__", links))
     return destination
 

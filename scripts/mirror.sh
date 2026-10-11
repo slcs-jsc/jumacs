@@ -5,13 +5,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="${1:-}"
 case "$mode" in
   local)
-    hpc_root="$(realpath -m "${JUMACS_HPC_ROOT:-$HOME/jumount/data/slmet/model_data/jumacs}")"
-    source="$hpc_root/site"
+    source="${JUMACS_HPC_MIRROR:-judac.fz-juelich.de:/p/data1/slmet/model_data/jumacs/site}"
     destination="$root/site"
     ;;
   web) source="$root/site"; destination="${JUMACS_WEB_SITE_MIRROR:-}" ;;
-  data) source="$root/products/release"; destination="${JUMACS_WEB_DATA_MIRROR:-}" ;;
-  *) echo "Usage: scripts/mirror.sh {local|web|data}" >&2; exit 2 ;;
+  *) echo "Usage: scripts/mirror.sh {local|web}" >&2; exit 2 ;;
 esac
 
 if [[ "$mode" != local && -z "$destination" ]]; then
@@ -23,7 +21,12 @@ if [[ "$destination" == / || "$destination" == . || "$destination" == .. || "$de
   exit 2
 fi
 destination="${destination%/}"
-if [[ ! -d "$source" ]]; then
+if [[ "$source" != /* && "$source" == *:* ]]; then
+  remote_source=true
+else
+  remote_source=false
+fi
+if [[ "$remote_source" == false && ! -d "$source" ]]; then
   echo "Mirror source is missing: $source" >&2
   exit 2
 fi
@@ -33,7 +36,11 @@ if [[ "$mode" == web && ( ! -f "$source/index.html" || ! -d "$source/products/ap
 fi
 
 if [[ "$mode" == local ]]; then
-  if [[ ! -d "$root/.git" || -L "$destination" || "$(realpath -m "$root")" == "$hpc_root" ]]; then
+  if [[ "$remote_source" == false && "$(realpath -m "$source")" == "$destination" ]]; then
+    echo "Mirror source and destination are the same directory: $source" >&2
+    exit 2
+  fi
+  if [[ ! -d "$root/.git" || -L "$destination" ]]; then
     echo "Run mirror-local from a separate local Git checkout with a regular site/ directory" >&2
     exit 2
   fi
