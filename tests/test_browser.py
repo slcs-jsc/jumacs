@@ -203,6 +203,25 @@ def test_about_and_contact_view(tmp_path, monkeypatch):
     assert "Forschungszentrum Jülich" in html
     assert 'href="mailto:l.hoffmann@fz-juelich.de"' in html
     assert 'href="https://github.com/slcs-jsc/jumacs"' in html
+    assert "<address class=\"contact\">Dr. Lars Hoffmann" in html
+    assert '<h2>Project links</h2>' in html
+    assert '<a href="https://datapub.fz-juelich.de/slcs/jumacs/">Published data</a>' in html
+    assert '<a href="https://github.com/slcs-jsc/jumacs">Source code on GitHub</a>' in html
+    assert ">https://github.com/slcs-jsc/jumacs<" not in html
+    assert "Source code: <a" not in html
+
+
+def test_development_disclaimer_is_a_styled_paragraph(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
+    text = " ".join(html.split())
+    assert ('<p class="disclaimer">JuMACS is under active development. The public site provides the current '
+            "model-based climatologies, application products, diagnostic atlas, and source-data provenance. "
+            "Additional datasets, evaluation results, and functionality may be added in future releases.</p>") in text
 
 
 def test_v01_release_header_and_development_disclaimer(tmp_path, monkeypatch):
@@ -216,7 +235,6 @@ def test_v01_release_header_and_development_disclaimer(tmp_path, monkeypatch):
             "Harmonized multi-source model climatologies</p>") in html
     assert "Model climatologies on the shared pressure grid" not in html
     assert "JuMACS is under active development" in html
-    assert "Version 0.1 represents the initial public release" in html
     assert "Feedback and scientific collaboration are very welcome." in html
     assert "Jülich Multi-source Atmospheric Climatology and Statistics" in html
     assert "Climatology System" not in html
@@ -286,7 +304,50 @@ def test_combined_products_are_published_and_linked(tmp_path, monkeypatch):
         published = report["site"] / "products" / "combined" / name
         assert published.is_file() and published.read_bytes() == b"combined"
         assert f'href="products/combined/{name}"' in html
-    assert "EMAC → WACCM-X · 1985–2014 · 5° latitude × 1 km altitude" in html
+    assert '<article class="product">' in html
+    assert "EMAC-CCMI2" in html
+    assert "GEOSCCM" in html
+    assert "Combined with WACCM-X · 1985–2014" in html
+    assert "12 months · 5° latitude · 1 km altitude · NetCDF · 8 B" in html
+    assert "→ WACCM-X" not in html
+
+
+def test_products_page_explains_and_discovers_dynamically(tmp_path, monkeypatch):
+    from jumacs import browser
+    from jumacs.browser import HTML_TEMPLATE
+
+    def placeholder(*args, **kwargs):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
+    _product(tmp_path)
+    combined = tmp_path / "products" / "climatology" / "combined"
+    combined.mkdir(parents=True)
+    slugs = ("ccsr-nies-miroc32", "cesm2-waccm", "cmam", "cnrm-mocage", "emac", "geosccm",
+             "ipsl-cm6a-atm-lr-reprobus", "socol")
+    for slug in slugs:
+        (combined / f"jumacs_{slug}_waccmx_1985-2014_5deg_1km.nc").write_bytes(b"x" * 6_500_000)
+    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
+    assert html.count('<article class="product">') == 8
+    assert "The current public set contains 8 curated" in html
+    assert "one compact combined climatology product per active primary CCMI model" in html
+    assert "12 climatological months at 5° latitude resolution on a 1 km altitude grid" in html
+    assert "approximately 0–120 km" in html
+    assert "No bias correction or gap filling is applied" in html
+    assert "docs/methodology.md" in html
+    assert "intended for convenient" in html
+    for slug, label in (("ccsr-nies-miroc32", "CCSR-NIES-MIROC32"), ("cesm2-waccm", "CESM2-WACCM"),
+                        ("cmam", "CMAM"), ("cnrm-mocage", "CNRM-MOCAGE"), ("emac", "EMAC-CCMI2"),
+                        ("geosccm", "GEOSCCM"), ("ipsl-cm6a-atm-lr-reprobus", "IPSL-CM6A-ATM-LR-REPROBUS"),
+                        ("socol", "SOCOL")):
+        assert f"<h3>{label}</h3>" in html
+        assert f'href="products/combined/jumacs_{slug}_waccmx_1985-2014_5deg_1km.nc"' in html
+        assert "6.5 MB" in html
+    for slug in slugs:
+        assert slug.upper() not in HTML_TEMPLATE
+        assert slug not in HTML_TEMPLATE
 
 
 def test_combined_links_honor_product_url_base(monkeypatch):

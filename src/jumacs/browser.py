@@ -336,18 +336,39 @@ COMBINED_NAME = re.compile(
     r"_(?P<latitude>\d+)deg_(?P<altitude>\d+)km\.nc")
 
 
-def _combined_item(name, base):
+def _model_display_name(slug):
+    for name in config.model_names():
+        if name.lower() == slug:
+            return config.model_metadata(name)["display_name"]
+    return slug.upper()
+
+
+def _human_size(nbytes):
+    value = float(nbytes)
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if value < 1000 or unit == "TB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1000.0
+
+
+def _combined_item(name, base, sizes=None):
+    href = escape(f"{base.rstrip('/')}/{name}", quote=True)
+    size = f" · {_human_size(sizes[name])}" if sizes and name in sizes else ""
     match = COMBINED_NAME.fullmatch(name)
     if match:
-        label = (f"{match['model'].upper()} → WACCM-X · {match['start']}–{match['end']} · "
-                 f"{match['latitude']}° latitude × {match['altitude']} km altitude")
+        card = [f'<h3>{escape(_model_display_name(match["model"]))}</h3>',
+                f'<p class="product-sub">Combined with WACCM-X · {match["start"]}–{match["end"]}</p>',
+                '<p class="product-meta">12 months · '
+                f'{match["latitude"]}° latitude · {match["altitude"]} km altitude · NetCDF{escape(size)}</p>']
     else:
-        label = name
-    href = escape(f"{base.rstrip('/')}/{name}", quote=True)
-    return f'<li><a href="{href}" download>{escape(label)}</a> <code>{escape(name)}</code></li>'
+        card = [f'<h3>{escape(name)}</h3>']
+    card.append(f'<a class="download" href="{href}" download>Download NetCDF</a>')
+    card.append(f'<p class="product-file"><code>{escape(name)}</code></p>')
+    return f'<article class="product">{"".join(card)}</article>'
 
 
-def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), combined_files=()):
+def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), combined_files=(),
+          combined_sizes=None):
     catalog = []
     for model, product, fields in records:
         for field in fields:
@@ -360,13 +381,14 @@ def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), com
     inventory_payload = json.dumps(inventory_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     provenance_payload = json.dumps(provenance_rows, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     base = os.environ.get("JUMACS_PRODUCT_URL_BASE", "").strip() or "products/combined"
-    combined_html = "".join(_combined_item(name, base) for name in combined_files) \
-        or "<li>No combined products are published for this period yet.</li>"
+    combined_html = "".join(_combined_item(name, base, combined_sizes) for name in combined_files) \
+        or '<p>No combined products are published for this period yet.</p>'
     year = config.reference_period()["reference_period"]["nominal_reference_year"]
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
             .replace("__MAP_YEAR__", str(year))
             .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload)
             .replace("__PROVENANCE__", provenance_payload)
+            .replace("__COMBINED_COUNT__", str(len(combined_files)))
             .replace("__COMBINED__", combined_html))
 
 
@@ -430,27 +452,42 @@ archive record; a dataset UUID covers the archive collection or dataset as noted
 <div id="provenance-list"></div>
 </section>
 <section id="combined-view" hidden><h2>Combined climatology products</h2>
-<p>Combined JuMACS climatology products merge a source model with WACCM-X into one harmonized file on a common
-altitude grid (monthly × geopotential height × latitude), intended for direct use in applications such as
-JURASSIC and MPTRAC. Native and application products remain available through the plot and data-availability views.</p>
-<ul>__COMBINED__</ul></section>
+<div class="product-intro"><p>JuMACS provides one compact combined climatology product per active primary CCMI model.
+Each file merges the harmonized lower and middle-atmosphere climatology with WACCM-X upper-atmosphere information
+where the established extension rules apply. The current public set contains __COMBINED_COUNT__ curated
+primary-model products.</p>
+<p>Every product covers 12 climatological months at 5° latitude resolution on a 1 km altitude grid spanning
+approximately 0–120 km as supported by the individual fields, and is distributed as NetCDF. Not every variable
+necessarily reaches 120 km: fields without an established extension stop at the available model top.
+No bias correction or gap filling is applied. The
+<a href="https://github.com/slcs-jsc/jumacs/blob/main/docs/methodology.md">combination methodology</a> documents
+the extension rules and the blending range.</p></div>
+<div class="products-grid">__COMBINED__</div>
+<p class="products-note">Model-specific application and native climatology products remain available through the plots
+and data-availability views; this page focuses on the compact combined products intended for convenient
+download and use.</p></section>
 <section id="about-view" hidden><h2>About JuMACS</h2>
-<p>JuMACS — the Jülich Multi-source Atmospheric Climatology and Statistics — provides reproducible monthly
+<p>JuMACS — Jülich Multi-source Atmospheric Climatology and Statistics — provides reproducible monthly
 atmospheric climatologies and associated statistics for scientific applications.</p>
-<p>JuMACS combines published chemistry–climate model data from multiple sources on a common application grid while
-preserving the individual source-model climatologies and their provenance. The current products are designed in
-particular for use with atmospheric modelling and radiative-transfer tools such as JURASSIC and MPTRAC.</p>
+<p>JuMACS combines published chemistry–climate model data from multiple sources into harmonized products on a
+common application grid while preserving the individual source-model climatologies and their provenance.
+The current products are designed in particular for use with atmospheric modelling and radiative-transfer tools
+such as JURASSIC and MPTRAC.</p>
 <p>The project provides native-model climatologies, harmonized application products, diagnostic visualizations, and
 detailed source-data provenance. Original source datasets remain subject to their respective licences and citation
 requirements.</p>
-<p>JuMACS is under active development. Version 0.1 represents the initial public release of the current model-based
+<p class="disclaimer">JuMACS is under active development. The public site provides the current model-based
 climatologies, application products, diagnostic atlas, and source-data provenance. Additional datasets, evaluation
 results, and functionality may be added in future releases.</p>
 <h2>Contact</h2>
-<p>Dr. Lars Hoffmann<br>Jülich Supercomputing Centre (JSC)<br>Forschungszentrum Jülich<br>Germany<br>
-<a href="mailto:l.hoffmann@fz-juelich.de">l.hoffmann@fz-juelich.de</a></p>
+<address class="contact">Dr. Lars Hoffmann<br>Jülich Supercomputing Centre (JSC)<br>Forschungszentrum Jülich<br>Germany<br>
+<a href="mailto:l.hoffmann@fz-juelich.de">l.hoffmann@fz-juelich.de</a></address>
 <p>Feedback and scientific collaboration are very welcome.</p>
-<p>Source code: <a href="https://github.com/slcs-jsc/jumacs">https://github.com/slcs-jsc/jumacs</a></p>
+<h2>Project links</h2>
+<ul class="project-links">
+<li><a href="https://datapub.fz-juelich.de/slcs/jumacs/">Published data</a></li>
+<li><a href="https://github.com/slcs-jsc/jumacs">Source code on GitHub</a></li>
+</ul>
 </section>
 <script id="catalog" type="application/json">__CATALOG__</script>
 <script id="inventory-data" type="application/json">__INVENTORY__</script>
@@ -659,12 +696,26 @@ header{background:#12364b;color:white;padding:1.2rem max(1.5rem,calc((100vw - 14
 header h1{margin:0;font-size:1.6rem}header p{margin:.3rem 0 0;color:#cee2e9;font-size:.92rem}
 header nav{display:flex;gap:.5rem;margin-top:.7rem}header nav button.active{background:var(--accent);color:white}
 main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr)}
-main[hidden],#inventory-view[hidden],#provenance-view[hidden],#about-view[hidden]{display:none}
-#inventory-view,#provenance-view,#about-view{max-width:1420px;margin:auto;padding:1.5rem}
+main[hidden],#inventory-view[hidden],#provenance-view[hidden],#combined-view[hidden],#about-view[hidden]{display:none}
+#inventory-view,#provenance-view,#combined-view,#about-view{max-width:1420px;margin:auto;padding:1.5rem}
 #about-view{max-width:60rem}
 #about-view p{max-width:75ch}
 #about-view h2:not(:first-child){margin-top:1.6rem}
 #about-view a{color:var(--accent)}
+#about-view address.contact{font-style:normal;line-height:1.6;margin:0}
+.project-links{margin:.6rem 0 0;padding-left:1.2rem;display:grid;gap:.45rem;max-width:75ch}
+#combined-view p{max-width:90ch}
+.product-intro{background:white;border:1px solid var(--line);border-radius:.8rem;padding:.4rem 1.2rem;margin-top:1rem}
+.product-intro p{margin:.7rem 0}
+.product-intro a{color:var(--accent)}
+.products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(21rem,1fr));gap:.9rem;margin-top:1.1rem}
+.product{background:white;border:1px solid var(--line);border-radius:.8rem;padding:1rem 1.2rem;display:grid;gap:.45rem;align-content:start}
+.product h3{margin:0;font-size:1.05rem;overflow-wrap:anywhere}
+.product-sub{margin:0;color:var(--muted);font-size:.85rem}
+.product-meta{margin:0;color:var(--muted);font-size:.85rem}
+.product a.download{justify-self:start}
+.product-file{margin:0;color:var(--muted);font-size:.78rem;overflow-wrap:anywhere}
+.products-note{margin:1.1rem 0 0;color:#3f6472;font-size:.86rem;max-width:90ch}
 #inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
 #provenance-list{display:grid;gap:.9rem;margin-top:1.1rem}
 .dataset{background:white;border:1px solid var(--line);border-radius:.8rem;padding:1rem 1.2rem;display:grid;grid-template-columns:minmax(11rem,16rem) minmax(0,1fr);gap:.5rem 1.6rem;align-items:start}
@@ -699,7 +750,7 @@ figcaption span:last-child{display:flex;gap:.4rem;flex-wrap:wrap}
 .plot-note{margin:.15rem 0 0;color:#3f6472;font-size:.86rem;max-width:90ch}
 @media(max-width:760px){main{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}
 #variables{display:flex;max-height:none;overflow:auto}.item{white-space:nowrap}.viewer{padding:1rem}figure img{max-height:none}
-.dataset{grid-template-columns:minmax(0,1fr)}}
+.dataset{grid-template-columns:minmax(0,1fr)}.products-grid{grid-template-columns:minmax(0,1fr)}}
 """
 
 
@@ -842,6 +893,7 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             shutil.copy2(source, target)
             published_native.add(rel)
         combined_files = []
+        combined_sizes = {}
         combined_source = root / "products" / "climatology" / "combined"
         if combined_source.is_dir():
             target_dir = staging / "products" / "combined"
@@ -851,8 +903,10 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target_dir / source.name)
                 combined_files.append(source.name)
+                combined_sizes[source.name] = source.stat().st_size
         (staging / "index.html").write_text(
-            _html(records, start_year, end_year, site_inventory, provenance["sources"], combined_files),
+            _html(records, start_year, end_year, site_inventory, provenance["sources"], combined_files,
+                  combined_sizes),
             encoding="utf-8")
         for name in ("plots", "assets", "index.html"):
             old = site / name
