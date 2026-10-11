@@ -125,9 +125,8 @@ def test_ccsr_near_fill_values_are_missing_before_longitude_mean(tmp_path):
         np.testing.assert_allclose(out.isel(time=0, lev=1).values, [240., 250.])
 
 
-PUBLISHED_LEVEL_MODELS = ("ACCESS-CM2-Chem", "UKESM1-StratTrop")
-FILE_STAMPS = {"ACCESS-CM2-Chem": "r1i1p1f1_gn_198501-198612",
-               "UKESM1-StratTrop": "r1i1p1f2_grz_19850101-19870101"}
+PUBLISHED_LEVEL_MODELS = ("UKESM1-StratTrop",)
+FILE_STAMPS = {"UKESM1-StratTrop": "r1i1p1f2_grz_19850101-19870101"}
 
 
 def _stamped_raw_file(root, model, family, name, dataset):
@@ -140,23 +139,18 @@ def _stamped_raw_file(root, model, family, name, dataset):
     return path
 
 
-def test_access_and_ukesm_are_buildable_from_published_pressure_levels():
-    for model in PUBLISHED_LEVEL_MODELS:
-        config = load_config(model)
-        assert config["capabilities"]["zonal_processing"] is True
-        assert config["capabilities"]["climatology"] is True
-        assert config["coordinates"] == {"latitude": "lat", "longitude": "lon",
-                                         "level": "plev", "pressure": "plev"}
-        assert config["preferred_family_when_available"] == "AmonZ"
-    access = load_config("ACCESS-CM2-Chem")
-    assert set(access["exclude_from_climatology"]) == {"c2h6"}
-    assert "c2h6" in access["variables"].values()
-    assert "c2h6" not in configured_variables("ACCESS-CM2-Chem", access)
-    assert "exclude_from_climatology" not in load_config("UKESM1-StratTrop")
+def test_ukesm_is_buildable_from_published_pressure_levels():
+    config = load_config("UKESM1-StratTrop")
+    assert config["capabilities"]["zonal_processing"] is True
+    assert config["capabilities"]["climatology"] is True
+    assert config["coordinates"] == {"latitude": "lat", "longitude": "lon",
+                                     "level": "plev", "pressure": "plev"}
+    assert config["preferred_family_when_available"] == "AmonZ"
+    assert "exclude_from_climatology" not in config
 
 
 @pytest.mark.parametrize("model", PUBLISHED_LEVEL_MODELS)
-def test_access_and_ukesm_native_and_application_products(tmp_path, monkeypatch, model):
+def test_ukesm_native_and_application_products(tmp_path, monkeypatch, model):
     import jumacs.build as build_module
     import jumacs.climatology as climatology_module
     import jumacs.config as config_module

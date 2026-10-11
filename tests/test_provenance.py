@@ -87,7 +87,7 @@ def test_provenance_page_in_site(tmp_path, monkeypatch):
     embedded = json.loads(re.search(
         r'<script id="provenance-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
     datasets = {row["dataset"] for row in embedded}
-    for name in ("CESM2-WACCM", "ACCESS-CM2-Chem", "UKESM1-StratTrop", "SOCOL", "GEOSCCM",
+    for name in ("CESM2-WACCM", "UKESM1-StratTrop", "SOCOL", "GEOSCCM",
                  "WACCM-X transient 1950-2015"):
         assert name in datasets
     assert all(row["persistent_identifier"] for row in embedded)

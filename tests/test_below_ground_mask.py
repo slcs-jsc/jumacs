@@ -109,29 +109,29 @@ def test_hybrid_field_preserves_current_behavior(tmp_path, monkeypatch):
         assert "below_ground_mask" not in result.attrs
 
 
-def test_access_surface_pressure_discovery_across_families(tmp_path, monkeypatch):
-    raw = tmp_path / "data/raw/ACCESS-CM2-Chem/refD1"
+def test_ukesm_surface_pressure_discovery_across_families(tmp_path, monkeypatch):
+    raw = tmp_path / "data/raw/UKESM1-StratTrop/refD1"
     cfcl3_dir = raw / "AmonZ/cfcl3"
     ps_dir = raw / "Amon/ps"
     cfcl3_dir.mkdir(parents=True)
     ps_dir.mkdir(parents=True)
-    (cfcl3_dir / "cfcl3_AmonZ_ACCESS-CM2-Chem_refD1_r1i1p1f1_gn_200001-200002.nc").touch()
-    (ps_dir / "ps_Amon_ACCESS-CM2-Chem_refD1_r1i1p1f1_gn_200001-200002.nc").touch()
+    (cfcl3_dir / "cfcl3_AmonZ_UKESM1-StratTrop_refD1_r1i1p1f2_grz_20000101-20000201.nc").touch()
+    (ps_dir / "ps_Amon_UKESM1-StratTrop_refD1_r1i1p1f2_grz_20000101-20000201.nc").touch()
     monkeypatch.setattr(config_module, "ROOT", tmp_path)
-    assert config_module.load_config("ACCESS-CM2-Chem")["variables"]["CFC-11"] == "cfcl3"
-    assert config_module.load_config("ACCESS-CM2-Chem")["variables"]["surface_pressure"] == "ps"
-    field_files = reader.source_files("ACCESS-CM2-Chem", "CFC-11")
-    surface_files = reader.source_files("ACCESS-CM2-Chem", "surface_pressure")
+    assert config_module.load_config("UKESM1-StratTrop")["variables"]["CFC-11"] == "cfcl3"
+    assert config_module.load_config("UKESM1-StratTrop")["variables"]["surface_pressure"] == "ps"
+    field_files = reader.source_files("UKESM1-StratTrop", "CFC-11")
+    surface_files = reader.source_files("UKESM1-StratTrop", "surface_pressure")
     assert [path.parent.parent.name for path in field_files] == ["AmonZ"]
     assert [path.parent.parent.name for path in surface_files] == ["Amon"]
 
 
-def test_access_surface_pressure_file_opens(tmp_path, monkeypatch):
+def test_ukesm_surface_pressure_file_opens(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module, "ROOT", tmp_path)
-    path = tmp_path / "ps_Amon_ACCESS-CM2-Chem_refD1_r1i1p1f1_gn_200001-200002.nc"
+    path = tmp_path / "ps_Amon_UKESM1-StratTrop_refD1_r1i1p1f2_grz_20000101-20000201.nc"
     xr.Dataset({"ps": (("time", "lat", "lon"), np.full((2, 2, 3), 100000.), {"units": "Pa"})},
                coords={"time": TIMES, "lat": LAT, "lon": LON}
                ).to_netcdf(path, engine="netcdf4")
-    with reader.open_source(path, "ACCESS-CM2-Chem", "surface_pressure") as ds:
+    with reader.open_source(path, "UKESM1-StratTrop", "surface_pressure") as ds:
         assert set(ds.ps.dims) == {"time", "lat", "lon"}
         assert np.isfinite(ds.ps.values).all()

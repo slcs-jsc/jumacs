@@ -9,49 +9,6 @@ import xarray as xr
 from . import cf, config, extension, remap
 from .climatology import product_name
 
-LOWER_BOUNDARY_MASK_MODELS = ("ACCESS-CM2-Chem",)
-LOWER_BOUNDARY_QUALITY_MASK = "ACCESS-CM2-Chem conservative pressure-latitude mask"
-LOWER_BOUNDARY_QUALITY_MASK_SCOPE = "application product only"
-LOWER_BOUNDARY_QUALITY_MASK_RULE = (
-    "invalid where pressure >= 95000 Pa; or where 70000 Pa <= pressure < 95000 Pa and (latitude < -65 degrees "
-    "or 30 degrees <= latitude <= 45 degrees); or where 60000 Pa <= pressure < 70000 Pa and latitude < -70 degrees")
-
-
-def lower_boundary_invalid_mask(pressure, latitude):
-    """The (pressure x latitude) cells of the ACCESS lower boundary diagnosed as unreliable.
-
-    The diagnosis compares each level against its neighbours in the remapped statistics:
-    the whole 1000 hPa level sits outside the envelope the levels above it trace, the
-    southern high-latitude columns below 700 hPa and 600 hPa carry the same vertical
-    discontinuity, and the tropics-north block at 866 hPa and 750 hPa stays 10 to
-    20 percent under the envelope in every month.
-    """
-    levels = np.asarray(pressure, dtype="float64")[:, None]
-    centers = np.asarray(latitude, dtype="float64")[None, :]
-    invalid = np.zeros((levels.size, centers.size), dtype=bool)
-    invalid |= levels >= 95000.0
-    invalid |= ((levels >= 70000.0) & (levels < 95000.0)
-                & ((centers < -65.0) | ((centers >= 30.0) & (centers <= 45.0))))
-    invalid |= (levels >= 60000.0) & (levels < 70000.0) & (centers < -70.0)
-    return invalid
-
-
-def apply_lower_boundary_quality_mask(product, model):
-    """Set the diagnosed lower-boundary cells to missing, and return how many fields were masked."""
-    if model not in LOWER_BOUNDARY_MASK_MODELS:
-        return 0
-    invalid = lower_boundary_invalid_mask(product["pressure"].values, product["lat"].values)
-    masked_count = 0
-    for name in list(product.data_vars):
-        field = product[name]
-        if field.dims != ("time", "pressure", "lat"):
-            continue
-        masked = field.where(~invalid)
-        masked.attrs.update(field.attrs)
-        product[name] = masked
-        masked_count += 1
-    return masked_count
-
 
 def build_application_product(model, start_year=None, end_year=None, *, extend=True, root=None):
     """Remap one published CCMI product and write a validated application product."""
@@ -100,7 +57,6 @@ def build_application_product(model, start_year=None, end_year=None, *, extend=T
                 field.attrs.update(canonical_variable=canonical, base_native_variable=base_native,
                                    donor_native_variable=donor_native)
 
-    masked_fields = apply_lower_boundary_quality_mask(product, model)
     product.attrs.update({
         "base_model": model,
         "base_input_product": str(base_path),
@@ -111,13 +67,8 @@ def build_application_product(model, start_year=None, end_year=None, *, extend=T
         "history": (str(product.attrs.get("history", "")) + "\n" +
                     f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}: remapped {model} "
                     f"onto the JuMACS application grid" +
-                    (" and extended upward with WACCM-X" if paired else "") +
-                    (" and masked the diagnosed lower-boundary cells" if masked_fields else "")).strip(),
+                    (" and extended upward with WACCM-X" if paired else "")).strip(),
     })
-    if masked_fields:
-        product.attrs.update({"lower_boundary_quality_mask": LOWER_BOUNDARY_QUALITY_MASK,
-                              "lower_boundary_quality_mask_scope": LOWER_BOUNDARY_QUALITY_MASK_SCOPE,
-                              "lower_boundary_quality_mask_rule": LOWER_BOUNDARY_QUALITY_MASK_RULE})
     cf.assert_product(product, names=base_names, grid=grid, kind="application", latitude_bands=36)
     destination = root / "products" / "application" / model / (
         f"jumacs_{config.model_slug(model)}_application_climatology_{start_year}-{end_year}.nc")
