@@ -33,7 +33,7 @@ coordinates: {latitude: lat, longitude: lon, level: plev, pressure: plev}
 # those hybrid levels only and cannot be reconstructed from the published metadata because the reference pressure
 # p0 the formula cites is absent from the files, so they are omitted from the production climatology rather than
 # reconstructed with an assumed constant. Amon supplies the 2D fields (ps, toz, ptp, tatp, ztp, tropoz).
-# epfy is omitted as well: like the NIWA case its EP-flux diagnostic carries noise no fill decoding removes -
+# epfy is omitted as well: its EP-flux diagnostic carries noise no fill decoding removes -
 # a single month at 100000 Pa reaches 1.6e12 m3 s-2, two thousand times the 99th percentile of that level - and it
 # is a stored value, not a fill artifact, so only a magnitude threshold could hide it. epfz is kept: its only
 # defect is 2310 archived values of -1e20, the negative of its declared 1e20 fill marker, which exact-equality

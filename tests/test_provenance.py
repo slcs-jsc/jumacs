@@ -29,11 +29,9 @@ def test_provenance_rows_identifiers_licences_and_volumes(tmp_path):
     assert socol["persistent_identifier"].startswith("https://data.ceda.ac.uk/")
     assert socol["license"] == "OGL v3" and socol["accessed"] == "2026-09-30"
     assert socol["raw_data_used_bytes"] == 3500 and socol["raw_data_used_human"] == "3.5 KB"
-    assert rows["UKESM1-StratTrop"]["member"] == "r1i1p1f2"
     assert rows["EMAC-CCMI2"]["member"] == "r1i1p1f1"
     assert "collection-level" in rows["CESM2-WACCM"]["notes"]
     assert rows["CESM2-WACCM"]["persistent_identifier"].endswith("/refD1/r1i1p1f1")
-    assert "omitted from the climatology" in rows["NIWA-UKCA2"]["notes"]
     assert rows["EMAC-CCMI2"]["license"] == "OGL v3" and rows["EMAC-CCMI2"]["accessed"] is None
     assert rows["EMAC-CCMI2"]["doi"] is None
     assert rows["EMAC-CCMI2"]["persistent_identifier"] == \
@@ -49,7 +47,6 @@ def test_provenance_rows_identifiers_licences_and_volumes(tmp_path):
     assert waccmx["license"] == "OGL v3" and waccmx["accessed"] is None
     assert waccmx["doi"] == "10.5285/dc91f5e39ae34fd883af81dfdbaf659c"
     assert waccmx["persistent_identifier"] == "https://catalogue.ceda.ac.uk/uuid/dc91f5e39ae34fd883af81dfdbaf659c/"
-    assert rows["NIWA-UKCA2"]["license"] == "OGL v3"
 
 
 def test_provenance_writes_catalog_files(tmp_path):
@@ -87,7 +84,7 @@ def test_provenance_page_in_site(tmp_path, monkeypatch):
     embedded = json.loads(re.search(
         r'<script id="provenance-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
     datasets = {row["dataset"] for row in embedded}
-    for name in ("CESM2-WACCM", "UKESM1-StratTrop", "SOCOL", "GEOSCCM",
+    for name in ("CESM2-WACCM", "SOCOL", "GEOSCCM",
                  "WACCM-X transient 1950-2015"):
         assert name in datasets
     assert all(row["persistent_identifier"] for row in embedded)

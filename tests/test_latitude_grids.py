@@ -20,13 +20,13 @@ LEVELS = np.asarray(GRID["levels"], float)
 # A vertical grid of the model itself, which the application grid deliberately is not.
 NATIVE = np.logspace(5.0, -0.5, 67)
 
-# The 73-point axis of the NIWA-UKCA2 archive and the 72-point axis of its EP fluxes.
+# A 96-point archive latitude axis and a 72-point axis of the kind an EP flux variable can carry.
 LAT = np.linspace(-88.57216851400727, 88.57216851400727, 96)
 LAT2 = np.linspace(-87.5, 87.5, 72)
 LAT3 = np.linspace(-86.0, 86.0, 25)
 
 
-def gridded_parts(specs, model="NIWA-UKCA2"):
+def gridded_parts(specs, model="IPSL-CM6A-ATM-LR-REPROBUS"):
     grids = {}
     return [assign_latitude_grid(part(name, lat, value), grids, model, name) for name, lat, value in specs]
 
@@ -53,19 +53,19 @@ def write_zonal(path, name, lat, value):
     ds.to_netcdf(path)
 
 
-def build_niwa(tmp_path, monkeypatch, grids):
+def build_product(tmp_path, monkeypatch, grids):
     monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
-    zonal = tmp_path / load_config("NIWA-UKCA2")["paths"]["zonal"]
+    zonal = tmp_path / load_config("IPSL-CM6A-ATM-LR-REPROBUS")["paths"]["zonal"]
     zonal.mkdir(parents=True)
     for name, (lat, value) in grids.items():
         write_zonal(zonal / f"{name}_monthly_zonal.nc", name, lat, value)
-    product = build_climatology("NIWA-UKCA2", 2000, 2001)
+    product = build_climatology("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001)
     with xr.open_dataset(product, decode_cf=False) as written:
         return written.load()
 
 
 def test_a_second_native_latitude_grid_becomes_its_own_dimension(tmp_path, monkeypatch):
-    ds = build_niwa(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3)})
+    ds = build_product(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3)})
     assert {dim for dim in ds.dims if is_latitude_dimension(dim)} == {"lat", "lat_2"}
     for name, lat in (("epfy", LAT2), ("o3", LAT)):
         axis = ds[f"{name}_mean"].attrs["latitude_axis"]
@@ -86,7 +86,7 @@ def test_a_second_native_latitude_grid_becomes_its_own_dimension(tmp_path, monke
 
 
 def test_discovery_order_names_the_grids_lat_lat_2_and_lat_3(tmp_path, monkeypatch):
-    ds = build_niwa(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3), "zg": (LAT3, 100.0)})
+    ds = build_product(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3), "zg": (LAT3, 100.0)})
     assert ds.sizes["lat"] == LAT2.size
     assert ds.sizes["lat_2"] == LAT.size
     assert ds.sizes["lat_3"] == LAT3.size
@@ -98,7 +98,7 @@ def test_discovery_order_names_the_grids_lat_lat_2_and_lat_3(tmp_path, monkeypat
 
 
 def test_near_identical_grids_still_collapse_to_one_dimension(tmp_path, monkeypatch):
-    ds = build_niwa(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (jitter(LAT, 4.0e-6), 1.0e-3)})
+    ds = build_product(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (jitter(LAT, 4.0e-6), 1.0e-3)})
     assert {dim for dim in ds.dims if is_latitude_dimension(dim)} == {"lat"}
     assert ds.sizes["lat"] == 96
     assert np.abs(ds.lat.values - LAT).max() <= LATITUDE_SNAP_TOLERANCE_DEGREES
@@ -111,7 +111,7 @@ def test_near_identical_grids_still_collapse_to_one_dimension(tmp_path, monkeypa
 def test_a_grid_only_beyond_tolerance_stays_a_grid_of_its_own_without_padding(tmp_path, monkeypatch):
     beyond = jitter(LAT2, 1.0e-9)
     beyond[30] += 0.5
-    ds = build_niwa(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3), "zg": (beyond, 100.0)})
+    ds = build_product(tmp_path, monkeypatch, {"o3": (LAT, 3.0e-6), "epfy": (LAT2, 1.0e-3), "zg": (beyond, 100.0)})
     assert ds.sizes["lat"] == 72 and ds.sizes["lat_2"] == 96 and ds.sizes["lat_3"] == 72
     assert np.array_equal(ds.lat.values, LAT2) and np.array_equal(ds.lat_3.values, beyond)
     assert ds.zg_mean.dims == ("time", "plev", "lat_3")
@@ -123,12 +123,12 @@ def test_a_latitude_axis_beyond_tolerance_below_the_snapping_level_is_refused():
     beyond = jitter(LAT, 7.6e-13)
     beyond[40] += 1e-3
     with pytest.raises(RuntimeError, match="differs from the canonical model grid"):
-        assemble_product("NIWA-UKCA2", 2000, 2001, [part("o3", LAT, 1.0), part("epfy", beyond, 2.0)])
+        assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, [part("o3", LAT, 1.0), part("epfy", beyond, 2.0)])
 
 
 def test_remap_places_every_grid_on_the_canonical_application_bands(tmp_path, monkeypatch):
     monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
-    product = assemble_product("NIWA-UKCA2", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
+    product = assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
     assert product.o3_mean.attrs["latitude_axis"] == "lat"
     assert product.epfy_mean.attrs["latitude_axis"] == "lat_2"
     assert product.attrs["latitude_counts"] == f"lat={LAT.size}; lat_2={LAT2.size}"
@@ -147,7 +147,7 @@ def test_remap_places_every_grid_on_the_canonical_application_bands(tmp_path, mo
 
 
 def test_the_application_contract_still_refuses_a_latitude_axis_named_lat_2():
-    product = assemble_product("NIWA-UKCA2", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
+    product = assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
     remapped = remap.remap_product(product).rename({"lat": "lat_2"})
     assert cf.validate_product(remapped, names=("o3", "epfy"), kind="application") != []
 
@@ -158,7 +158,7 @@ def test_the_inventory_recognizes_fields_on_a_second_latitude_grid(tmp_path):
         {"o3_mean": (("time", "lat_2"), np.zeros((2, lat.size), np.float32), {"units": "mol mol-1"}),
          "epfy_mean": (("time", "pressure", "lat_2"), np.zeros((2, 3, lat.size), np.float32), {"units": "m2 s-2"})},
         coords={"time": [0.0, 1.0], "pressure": ("pressure", [100000., 1000., 10.]), "lat_2": ("lat_2", lat)})
-    path = tmp_path / "niwa_ukca2_refd1_2000_2001.nc"
+    path = tmp_path / "ipsl_cm6a_refd1_2000_2001.nc"
     ds.to_netcdf(path)
     skipped = []
     fields = inventory._fields(path, skipped)

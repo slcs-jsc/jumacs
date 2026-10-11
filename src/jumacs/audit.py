@@ -14,7 +14,6 @@ AUDIT_COLUMNS = ["model", "kind", "status", "member", "first_month", "last_month
 
 MODEL_NOTES = {"SOCOL": "two configured archive bases (gn + gnz); only configured member r1i1p1f1 planned"
                         " (r2i1p1f1, r3i1p1f1 exist in the archive and are excluded)",
-               "UKESM1-StratTrop": "8-digit YYYYMMDD date stamps preserved",
                "CESM2-WACCM": "collection-level dataset_uuid (no per-experiment refD1 record published)",
                "WACCM-X": "monthly zonal multivariable _zm.nc files, kept separate from CCMI totals"}
 

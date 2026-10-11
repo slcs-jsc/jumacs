@@ -201,7 +201,7 @@ def test_capabilities_gate_commands():
     assert has_capability("WACCM-X", "zonal_processing") and not has_capability("WACCM-X", "compact_waccmx")
     assert set(models_with_capability("archive_inventory")) == {
         "GEOSCCM", "EMAC", "WACCM-X", "CCSR-NIES-MIROC32", "CESM2-WACCM", "CMAM",
-        "CNRM-MOCAGE", "IPSL-CM6A-ATM-LR-REPROBUS", "NIWA-UKCA2", "SOCOL", "UKESM1-StratTrop"}
+        "CNRM-MOCAGE", "IPSL-CM6A-ATM-LR-REPROBUS", "SOCOL"}
     assert {"GEOSCCM", "EMAC", "WACCM-X", "CMAM", "CNRM-MOCAGE", "SOCOL"} <= set(buildable_model_names())
     assert "MIROC-ES2H" not in buildable_model_names()
     assert not any(has_capability("MIROC-ES2H", cap) for cap in
@@ -290,7 +290,7 @@ def test_registry_kinds_and_statuses():
     assert "WACCM-X" not in ccmi_model_names()
     assert set(ready_ccmi_model_names()) >= {"GEOSCCM", "EMAC"}
     assert set(ready_model_names()) >= {"GEOSCCM", "EMAC", "WACCM-X"}
-    assert len(ccmi_model_names()) >= 11
+    assert len(ccmi_model_names()) >= 9
     geosccm = model_metadata("GEOSCCM")
     assert geosccm["kind"] == "ccmi" and geosccm["status"] == "ready" and geosccm["slug"] == "geosccm_refd1"
     waccmx = model_metadata("WACCM-X")

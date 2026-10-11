@@ -386,9 +386,10 @@ def _same_latitude_grid(known, values):
 def latitude_grid_name(grids, latitude):
     """The product name of one native latitude dimension, so distinct grids get distinct names.
 
-    NIWA publishes its EP fluxes on a 72-point latitude axis while everything else sits on the 73-point
-    one. Merged under one name the dimension becomes the union of two different axes and most rows of both
-    fields turn into NaN, so the second grid is published as 'lat_2' and so on. Nothing is resampled: each
+    A model that keeps one variable (an EP flux diagnostic, say) on a 72-point latitude axis while the rest
+    sits on the 73-point one would, merged under one name, turn the dimension into the union of two different
+    axes and most rows of both fields into NaN, so the second grid is published as 'lat_2' and so on. Nothing
+    is resampled: each
     grid keeps its own points, and grids that differ only by roundoff are one grid snapped onto one anchor.
     """
     for name, anchor in grids.items():

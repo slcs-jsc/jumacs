@@ -73,14 +73,14 @@ def test_full_plan_socol_split_archive_bases(patched):
     assert not any("r2i1p1f1" in r["filename"] or "r3i1p1f1" in r["filename"] for r in payload["files"])
 
 
-def test_full_plan_ukesm1_keeps_eight_digit_dates_and_all_files(patched):
-    inventory = {"model": "UKESM1-StratTrop", "experiment": "refD1", "files": [
-        _entry("Amon", "o3", "o3_Amon_UKESM1-StratTrop_refD1_gn_r1i1p1f2_19600101-20190101.nc", "gn",
+def test_full_plan_keeps_eight_digit_dates_and_all_files(patched):
+    inventory = {"model": "CESM2-WACCM", "experiment": "refD1", "files": [
+        _entry("Amon", "o3", "o3_Amon_CESM2-WACCM_refD1_gn_r1i1p1f1_19600101-20190101.nc", "gn",
                start="19600101", end="20190101", size=500),
-        _entry("AmonZ", "clo", "clo_AmonZ_UKESM1-StratTrop_refD1_grz_r1i1p1f2_19600101-20190101.nc", "grz",
+        _entry("AmonZ", "clo", "clo_AmonZ_CESM2-WACCM_refD1_gnz_r1i1p1f1_19600101-20190101.nc", "gnz",
                start="19600101", end="20190101", size=300)]}
-    patched({"UKESM1-StratTrop": inventory})
-    payload = full_plan("UKESM1-StratTrop")
+    patched({"CESM2-WACCM": inventory})
+    payload = full_plan("CESM2-WACCM")
     assert payload["first_month"] == "19600101" and payload["last_month"] == "20190101"
     assert payload["planned_file_count"] == 2
     assert {r["filename"] for r in payload["files"]} == {f["filename"] for f in inventory["files"]}
@@ -137,15 +137,15 @@ def test_download_audit_summary_totals_exclusions_and_determinism(tmp_path, monk
     import jumacs.audit as audit
     import requests
     inventories = {"SOCOL": _socol_inventory(),
-                   "UKESM1-StratTrop": {"model": "UKESM1-StratTrop", "experiment": "refD1", "files": [
-                       _entry("Amon", "o3", "o3_19600101-20190101.nc", "gn", start="19600101", end="20190101", size=500)]},
+                   "CMAM": {"model": "CMAM", "experiment": "refD1", "files": [
+                       _entry("Amon", "o3", "o3_200001-200012.nc", "gn", start="200001", end="200012", size=500)]},
                    "WACCM-X": {"model": "WACCM-X", "experiment": "transient-1950-2015", "files": [
                        _entry("monthly_zonal", "*", "a_zm.nc", "", size=1000)]}}
     monkeypatch.setattr(download_module, "ROOT", tmp_path)
     monkeypatch.setattr(download_module, "load_inventory", lambda model: inventories[model])
     monkeypatch.setattr(audit, "load_inventory", lambda model: inventories[model])
     monkeypatch.setattr(requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network access")))
-    models = ("SOCOL", "UKESM1-StratTrop", "WACCM-X")
+    models = ("SOCOL", "CMAM", "WACCM-X")
     first = audit.write_download_plan_summary(models, root=tmp_path)
     second = audit.write_download_plan_summary(models, root=tmp_path)
     assert [p.name for p in first] == ["download_plan_summary.csv", "download_plan_summary.md"]

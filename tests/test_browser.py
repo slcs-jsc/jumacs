@@ -403,10 +403,10 @@ def test_geographical_maps_use_single_source_year_and_native_pressure(tmp_path):
 
 
 def test_geographical_maps_use_separate_published_pressure(tmp_path):
-    folder = tmp_path / "data/raw/NIWA-UKCA2/refD1/Amon"
+    folder = tmp_path / "data/raw/CMAM/refD1/Amon"
     time = np.arange("2000-01", "2001-01", dtype="datetime64[M]").astype("datetime64[ns]")
     coords = {"time": time, "lat": [-45.0, 45.0], "lon": [0.0, 180.0]}
-    name = "ta_Amon_NIWA-UKCA2_refD1_r1i1p1f1_gn_200001-200012.nc"
+    name = "ta_Amon_CMAM_refD1_r1i1p1f1_gn_200001-200012.nc"
     source = folder / "ta" / name
     source.parent.mkdir(parents=True)
     xr.Dataset({"ta": (("time", "lev", "lat", "lon"),
@@ -419,7 +419,7 @@ def test_geographical_maps_use_separate_published_pressure(tmp_path):
                        np.broadcast_to(np.array([100000.0, 10000.0])[None, :, None, None],
                                        (12, 2, 2, 2)), {"units": "Pa"})},
                coords={**coords, "lev": [0, 1]}).to_netcdf(pressure)
-    maps, _, _, levels, _ = _map_values(source, "NIWA-UKCA2", "ta", 2000)
+    maps, _, _, levels, _ = _map_values(source, "CMAM", "ta", 2000)
     assert levels == PLOT_PRESSURES_HPA
     np.testing.assert_allclose(maps[:, 0], 210.0)
     np.testing.assert_allclose(maps[:, 1], 230.0)
