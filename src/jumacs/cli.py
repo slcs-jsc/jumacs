@@ -97,6 +97,17 @@ def main(argv=None):
     compact.add_argument("--transition-start", type=float, default=55)
     compact.add_argument("--transition-end", type=float, default=65)
     compact.add_argument("--variable", action="append")
+    ready = sub.add_parser("application-ready", help="Complete the compact EMAC/WACCM-X product with IG2 v3.1 upper-tail fill and constant edge fill")
+    ready.add_argument("--model", choices=(*models_with_capability("compact_waccmx"), "all"), required=True)
+    ready.add_argument("--start-year", type=int)
+    ready.add_argument("--end-year", type=int)
+    ready.add_argument("--latitude-step", type=int, default=5)
+    ready.add_argument("--altitude-step", type=int, default=1)
+    ready.add_argument("--transition-width", type=float, default=8.0, help="IG2 seam blend width in km (default: 8)")
+    ready.add_argument("--combined", help="Path to the compact combined product (default: products/climatology/combined)")
+    ready.add_argument("--ig2-dir", help="Path to the IG2 v3.1 archive directory (default: data/raw/IG2/v3.1)")
+    ready.add_argument("--output", help="Path to the output product (default: products/application-ready)")
+    ready.add_argument("--plots-dir", help="Optional directory for validation plots")
     sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
     sub.add_parser("provenance", help="Write the source data provenance catalog for every ready dataset (offline; writes products/catalog/data_provenance.csv and .json)")
     sub.add_parser("download-audit", help="Rebuild complete-archive download plans for every available source and write the mirror-plan audit (offline, no transfer)")
@@ -213,6 +224,21 @@ def main(argv=None):
                                 args.latitude_step, args.altitude_step,
                                 args.transition_start, args.transition_end,
                                 args.variable))
+        return
+    if args.command == "application-ready":
+        from .application_ready import build_application_ready
+        models = models_with_capability("compact_waccmx") if args.model == "all" else (args.model,)
+        start = args.start_year or reference["start_year"]
+        end = args.end_year or reference["end_year"]
+        for model in models:
+            report = build_application_ready(model, start, end,
+                                             args.latitude_step, args.altitude_step,
+                                             combined_path=args.combined, ig2_dir=args.ig2_dir,
+                                             output_path=args.output,
+                                             transition_width_km=args.transition_width,
+                                             plots_dir=args.plots_dir)
+            print(json.dumps({key: report[key] for key in
+                              ("product", "totals", "variables_flagged_for_hard_seam")}, indent=2))
         return
     if args.command == "compare":
         if args.models[0] == args.models[1]:
