@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-from . import config, coordinates, remap, vertical, zonal
+from . import config, coordinates, ig2, remap, vertical, zonal
 from .reader import open_source
 
 ZONAL_MONTHS = (1, 4, 7, 10)
@@ -76,6 +76,27 @@ def discover_application_products(root, start_year, end_year, model=None):
             products.append((name, path))
     if not products:
         raise FileNotFoundError(f"No application products for {start_year}-{end_year} in {base}")
+    return products
+
+
+READY_NAME = re.compile(
+    r"jumacs_(?P<model>[a-z0-9-]+?)_waccmx_ig2_(?P<start>\d{4})-(?P<end>\d{4})"
+    r"_(?P<latitude>\d+)deg_(?P<altitude>\d+)km\.nc")
+
+
+def discover_application_ready_products(root, start_year, end_year, model=None):
+    """Return existing application-ready (IG2-completed) products for the period."""
+    base = Path(root) / "products" / "application-ready"
+    if not base.is_dir():
+        return []
+    products = []
+    for path in sorted(base.glob("*.nc")):
+        match = READY_NAME.fullmatch(path.name)
+        if not match or int(match["start"]) != start_year or int(match["end"]) != end_year:
+            continue
+        if model is not None and model.lower() != match["model"]:
+            continue
+        products.append((match["model"], path))
     return products
 
 
@@ -331,6 +352,69 @@ def _plot_annual(field, model, label, units, path, *, scale=1.0):
                       "Annual cycle", "Month", path)
 
 
+def _ready_plot_path(model_dir, variable):
+    safe_model = re.sub(r"[^A-Za-z0-9_-]+", "_", model_dir)
+    safe_var = re.sub(r"[^A-Za-z0-9_-]+", "_", variable)
+    return Path("plots-ready") / safe_model / f"{safe_var}_section.png"
+
+
+def _plot_ready_section(values, altitude, latitudes, model, label, units, path):
+    """Draw a January/April/July/October latitude-altitude cross section grid."""
+    displayed = values[np.array(ZONAL_MONTHS) - 1]
+    finite = displayed[np.isfinite(displayed)]
+    low, high = float(finite.min()), float(finite.max())
+    if low == high:
+        width = max(abs(low) * 0.01, 1e-12)
+        low, high = low - width, high + width
+    ceiling = float(altitude.max())
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True, sharey=True, constrained_layout=True)
+    for ax, month, panel in zip(axes.flat, ZONAL_MONTHS, displayed):
+        image = ax.pcolormesh(latitudes, altitude, np.ma.masked_invalid(panel),
+                              shading="auto", cmap="viridis", vmin=low, vmax=high,
+                              rasterized=True)
+        ax.set(title=MONTH_NAMES[month], xlim=(float(latitudes.min()), float(latitudes.max())),
+               ylim=(0.0, ceiling))
+    for ax in axes[-1]:
+        ax.set_xlabel("Latitude (°N)")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Altitude (km)")
+    fig.suptitle(f"{model} · {label} · application-ready zonal section")
+    fig.colorbar(image, ax=axes, label=units or "Value", shrink=0.85)
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
+def _ready_item(info, ready_base, combined_base):
+    display = info["display"]
+    card = [f'<h3>{escape(display)}</h3>',
+            f'<p class="product-sub">Application-ready · IG2 v{ig2.VERSION} upper-tail completion</p>']
+    meta = (f'<p class="product-meta">12 months · {info["latitude"]}° latitude · '
+            f'{info["altitude"]} km altitude · NetCDF'
+            f'{escape(" · " + info["size"]) if info.get("size") else ""}</p>')
+    card.append(meta)
+    href = escape(f"{ready_base.rstrip('/')}/{info['filename']}", quote=True)
+    card.append(f'<a class="download" href="{href}" download>Download NetCDF</a>')
+    if info.get("base_product"):
+        derived = escape(f"{combined_base.rstrip('/')}/{info['base_product']}", quote=True)
+        card.append('<p class="product-meta">Derived from '
+                    f'<a href="{derived}">the compact combined product</a>.</p>')
+    card.append(f'<p class="product-file"><code>{escape(info["filename"])}</code></p>')
+    head = f'<article class="product">{"".join(card)}</article>'
+    figures = []
+    for entry in info["entries"]:
+        alt = escape(f"{display} {entry['display']} application-ready zonal section", quote=True)
+        source = escape(entry["url"], quote=True)
+        completion = "IG2 upper completion" if entry["completed"] else "edge-fill completion"
+        label = escape(entry["display"])
+        units = escape(entry["units"] or "Value")
+        figures.append(
+            f'<figure><img loading="lazy" src="{source}" alt="{alt}">'
+            f'<figcaption><span>{label} · {units}</span>'
+            f'<span>{escape(completion)}</span></figcaption></figure>')
+    plots = f'<div class="ready-plots">{"".join(figures)}</div>' if figures else ""
+    return f'<section class="ready-product">{head}{plots}</section>'
+
+
 COMBINED_NAME = re.compile(
     r"jumacs_(?P<model>[a-z0-9-]+?)_waccmx_(?P<start>\d{4})-(?P<end>\d{4})"
     r"_(?P<latitude>\d+)deg_(?P<altitude>\d+)km\.nc")
@@ -343,12 +427,25 @@ def _model_display_name(slug):
     return slug.upper()
 
 
+def _model_for_slug(slug):
+    for name in config.model_names():
+        if name.lower() == slug:
+            return name, config.model_metadata(name)["display_name"]
+    return slug, slug.upper()
+
+
 def _human_size(nbytes):
     value = float(nbytes)
     for unit in ("B", "kB", "MB", "GB", "TB"):
         if value < 1000 or unit == "TB":
             return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1000.0
+
+
+def _format_step(step, default):
+    if step is None:
+        return default
+    return f"{step:g}"
 
 
 def _combined_item(name, base, sizes=None):
@@ -368,7 +465,7 @@ def _combined_item(name, base, sizes=None):
 
 
 def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), combined_files=(),
-          combined_sizes=None):
+          combined_sizes=None, ready_products=()):
     catalog = []
     for model, product, fields in records:
         for field in fields:
@@ -383,13 +480,19 @@ def _html(records, start_year, end_year, inventory_rows, provenance_rows=(), com
     base = os.environ.get("JUMACS_PRODUCT_URL_BASE", "").strip() or "products/combined"
     combined_html = "".join(_combined_item(name, base, combined_sizes) for name in combined_files) \
         or '<p>No combined products are published for this period yet.</p>'
+    ready_base = os.environ.get("JUMACS_READY_URL_BASE", "").strip() or "products/application-ready"
+    ready_html = "".join(_ready_item(info, ready_base, base) for info in ready_products) \
+        or '<p>No application-ready products are published for this period yet.</p>'
     year = config.reference_period()["reference_period"]["nominal_reference_year"]
     return (HTML_TEMPLATE.replace("__PERIOD__", f"{start_year}–{end_year}")
             .replace("__MAP_YEAR__", str(year))
             .replace("__CATALOG__", payload).replace("__INVENTORY__", inventory_payload)
             .replace("__PROVENANCE__", provenance_payload)
             .replace("__COMBINED_COUNT__", str(len(combined_files)))
-            .replace("__COMBINED__", combined_html))
+            .replace("__COMBINED__", combined_html)
+            .replace("__READY_COUNT__", str(len(ready_products)))
+            .replace("__READY__", ready_html)
+            .replace("__IG2_VERSION__", ig2.VERSION))
 
 
 HTML_TEMPLATE = """<!doctype html>
@@ -398,7 +501,8 @@ HTML_TEMPLATE = """<!doctype html>
 <body><header><h1>JuMACS climatology atlas</h1>
 <p>JuMACS v0.1 · Initial public release · Harmonized multi-source model climatologies</p>
 <nav><button id="atlas-nav" class="active">Plots</button><button id="inventory-nav">Data availability</button>
-<button id="combined-nav">Products</button><button id="provenance-nav">Data provenance</button>
+<button id="combined-nav">Products</button><button id="ready-nav">Application-ready</button>
+<button id="provenance-nav">Data provenance</button>
 <button id="about-nav">About &amp; contact</button></nav></header>
 <main id="atlas"><aside><label for="model">Model / product</label><select id="model"></select>
 <label for="search">Variable</label><input id="search" type="search" placeholder="Search variable name">
@@ -466,6 +570,17 @@ the extension rules and the blending range.</p></div>
 <p class="products-note">Model-specific application and native climatology products remain available through the plots
 and data-availability views; this page focuses on the compact combined products intended for convenient
 download and use.</p></section>
+<section id="ready-view" hidden><h2>Application-ready products</h2>
+<div class="product-intro"><p>Application-ready products extend each compact combined climatology into a complete
+profile with no open boundaries: wherever a model or the WACCM-X extension leaves the upper tail open, the profile
+is continued with IG2 v__IG2_VERSION__ standard atmospheres through a short raised-cosine transition, and the lowest
+and highest levels are carried to the domain edges. Interior gaps are preserved and no bias correction is applied.
+Each file holds 12 climatological months at 5° latitude on a 1 km altitude grid (approximately 0–120 km) as NetCDF,
+ready for direct use in modelling and radiative-transfer tools such as JURASSIC and MPTRAC.</p>
+<p>The current set contains __READY_COUNT__ published product(s) for this period. The
+<a href="https://github.com/slcs-jsc/jumacs/blob/main/docs/methodology.md">combination methodology</a> documents the
+vertical extension and blending, and IG2 v__IG2_VERSION__ provides the upper-tail reference atmospheres.</p></div>
+__READY__</section>
 <section id="about-view" hidden><h2>About JuMACS</h2>
 <p>JuMACS — Jülich Multi-source Atmospheric Climatology and Statistics — provides reproducible monthly
 atmospheric climatologies and associated statistics for scientific applications.</p>
@@ -629,8 +744,8 @@ for (const button of document.querySelectorAll('.sort-button')) {
 }
 document.querySelector('.sort-button[data-sort="model"]').click();
 const views = [['atlas-nav', 'atlas'], ['inventory-nav', 'inventory-view'],
-               ['combined-nav', 'combined-view'], ['provenance-nav', 'provenance-view'],
-               ['about-nav', 'about-view']];
+               ['combined-nav', 'combined-view'], ['ready-nav', 'ready-view'],
+               ['provenance-nav', 'provenance-view'], ['about-nav', 'about-view']];
 for (const [button, active] of views) {
   document.getElementById(button).onclick = () => {
     for (const [, id] of views) document.getElementById(id).hidden = id !== active;
@@ -696,8 +811,8 @@ header{background:#12364b;color:white;padding:1.2rem max(1.5rem,calc((100vw - 14
 header h1{margin:0;font-size:1.6rem}header p{margin:.3rem 0 0;color:#cee2e9;font-size:.92rem}
 header nav{display:flex;gap:.5rem;margin-top:.7rem}header nav button.active{background:var(--accent);color:white}
 main{max-width:1420px;min-height:calc(100vh - 98px);margin:auto;display:grid;grid-template-columns:280px minmax(0,1fr)}
-main[hidden],#inventory-view[hidden],#provenance-view[hidden],#combined-view[hidden],#about-view[hidden]{display:none}
-#inventory-view,#provenance-view,#combined-view,#about-view{max-width:1420px;margin:auto;padding:1.5rem}
+main[hidden],#inventory-view[hidden],#provenance-view[hidden],#combined-view[hidden],#ready-view[hidden],#about-view[hidden]{display:none}
+#inventory-view,#provenance-view,#combined-view,#ready-view,#about-view{max-width:1420px;margin:auto;padding:1.5rem}
 #about-view{max-width:60rem}
 #about-view p{max-width:75ch}
 #about-view h2:not(:first-child){margin-top:1.6rem}
@@ -716,6 +831,13 @@ main[hidden],#inventory-view[hidden],#provenance-view[hidden],#combined-view[hid
 .product a.download{justify-self:start}
 .product-file{margin:0;color:var(--muted);font-size:.78rem;overflow-wrap:anywhere}
 .products-note{margin:1.1rem 0 0;color:#3f6472;font-size:.86rem;max-width:90ch}
+#ready-view p{max-width:90ch}
+.ready-product{display:grid;gap:1rem;margin-top:1.2rem}
+.ready-product .product{max-width:44rem}
+.ready-plots{display:grid;grid-template-columns:repeat(auto-fill,minmax(30rem,1fr));gap:1rem}
+.ready-plots figure{margin:0}
+.ready-plots figcaption span:last-child{color:var(--accent)}
+.ready-plots img{background:white}
 #inventory-search{max-width:28rem}.table-wrap{overflow:auto;margin-top:1rem}
 #provenance-list{display:grid;gap:.9rem;margin-top:1.1rem}
 .dataset{background:white;border:1px solid var(--line);border-radius:.8rem;padding:1rem 1.2rem;display:grid;grid-template-columns:minmax(11rem,16rem) minmax(0,1fr);gap:.5rem 1.6rem;align-items:start}
@@ -750,7 +872,7 @@ figcaption span:last-child{display:flex;gap:.4rem;flex-wrap:wrap}
 .plot-note{margin:.15rem 0 0;color:#3f6472;font-size:.86rem;max-width:90ch}
 @media(max-width:760px){main{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}
 #variables{display:flex;max-height:none;overflow:auto}.item{white-space:nowrap}.viewer{padding:1rem}figure img{max-height:none}
-.dataset{grid-template-columns:minmax(0,1fr)}.products-grid{grid-template-columns:minmax(0,1fr)}}
+.dataset{grid-template-columns:minmax(0,1fr)}.products-grid{grid-template-columns:minmax(0,1fr)}.ready-plots{grid-template-columns:minmax(0,1fr)}}
 """
 
 
@@ -829,6 +951,47 @@ def _render_model(model_name, product, root, staging):
     return (model_name, product, fields), skipped, timeline_skipped, map_skipped
 
 
+def _render_ready_product(model_dir, display, product, staging):
+    """Render latitude-altitude cross sections for one application-ready product."""
+    entries = []
+    skipped = []
+    base_product = None
+    latitude_step = None
+    altitude_step = None
+    with xr.open_dataset(product) as dataset:
+        base_product = dataset.attrs.get("base_product")
+        if "altitude" not in dataset.coords or "lat" not in dataset.coords or "month" not in dataset.coords:
+            return entries, skipped, base_product, latitude_step, altitude_step
+        altitude = np.asarray(dataset.altitude.values, dtype=float)
+        latitudes = np.asarray(dataset.lat.values, dtype=float)
+        if dataset.coords["month"].size != 12:
+            return entries, skipped, base_product, latitude_step, altitude_step
+        if altitude.size > 1:
+            altitude_step = float(np.round(np.median(np.diff(altitude)), 6))
+        if latitudes.size > 1:
+            latitude_step = float(np.round(np.median(np.diff(latitudes)), 6))
+        for name in sorted(dataset.data_vars):
+            field = dataset[name]
+            if field.dims != ("month", "altitude", "lat") or field.sizes["month"] != 12:
+                skipped.append((model_dir, name, "not a 12-month month×altitude×lat field"))
+                continue
+            values = np.asarray(field.values, dtype=float)
+            displayed = values[np.array(ZONAL_MONTHS) - 1]
+            if not np.isfinite(displayed).any():
+                skipped.append((model_dir, name, "no finite values in displayed months"))
+                continue
+            units = str(field.attrs.get("units", ""))
+            scale, plot_units = _display_scale(values, units)
+            completed = str(field.attrs.get("ig2_completed", "")).lower() == "true"
+            path = _ready_plot_path(model_dir, name)
+            (staging / path).parent.mkdir(parents=True, exist_ok=True)
+            _plot_ready_section(values * scale, altitude, latitudes, display,
+                                _display_name(name), plot_units, staging / path)
+            entries.append({"canonical": name, "display": _display_name(name),
+                            "units": plot_units, "completed": completed, "url": path.as_posix()})
+    return entries, skipped, base_product, latitude_step, altitude_step
+
+
 def build_site(start_year=None, end_year=None, *, model=None, root=None, workers=4):
     """Plot existing products and publish a deployable tree below ``root/site``."""
     if workers < 1:
@@ -838,6 +1001,7 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
     start_year = period["start_year"] if start_year is None else start_year
     end_year = period["end_year"] if end_year is None else end_year
     products = discover_application_products(root, start_year, end_year, model)
+    ready_products = discover_application_ready_products(root, start_year, end_year, model)
     from .inventory import build_inventory
     from .provenance import build_provenance
     inventory = build_inventory(start_year, end_year, model=model, root=root)
@@ -904,11 +1068,26 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
                 shutil.copy2(source, target_dir / source.name)
                 combined_files.append(source.name)
                 combined_sizes[source.name] = source.stat().st_size
+        ready_infos = []
+        ready_skipped = []
+        for slug, path in ready_products:
+            model_dir, display = _model_for_slug(slug)
+            entries, model_skipped, base_product, latitude_step, altitude_step = \
+                _render_ready_product(model_dir, display, path, staging)
+            ready_skipped.extend(model_skipped)
+            target = staging / "products" / "application-ready" / path.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            ready_infos.append({"model_dir": model_dir, "display": display,
+                                "filename": path.name, "size": _human_size(path.stat().st_size),
+                                "latitude": _format_step(latitude_step, "5"),
+                                "altitude": _format_step(altitude_step, "1"),
+                                "base_product": base_product, "entries": entries})
         (staging / "index.html").write_text(
             _html(records, start_year, end_year, site_inventory, provenance["sources"], combined_files,
-                  combined_sizes),
+                  combined_sizes, ready_infos),
             encoding="utf-8")
-        for name in ("plots", "assets", "index.html"):
+        for name in ("plots", "plots-ready", "assets", "index.html"):
             old = site / name
             if old.is_dir() and not old.is_symlink():
                 shutil.rmtree(old)
@@ -940,6 +1119,14 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             published_combined.unlink()
         if staged_combined.exists():
             staged_combined.replace(published_combined)
+        published_ready = site / "products" / "application-ready"
+        staged_ready = staging / "products" / "application-ready"
+        if published_ready.is_dir() and not published_ready.is_symlink():
+            shutil.rmtree(published_ready)
+        elif published_ready.exists() or published_ready.is_symlink():
+            published_ready.unlink()
+        if staged_ready.exists():
+            staged_ready.replace(published_ready)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return {"site": site, "models": [name for name, _, _ in records],
@@ -948,4 +1135,5 @@ def build_site(start_year=None, end_year=None, *, model=None, root=None, workers
             "png_files": sum(len(field["views"]) for _, _, fields in records for field in fields),
             "netcdf_files": len(records), "climatology_files": len(published_native),
             "combined_files": combined_files, "skipped": skipped,
+            "ready_files": [path.name for _, path in ready_products], "ready_skipped": ready_skipped,
             "timeline_skipped": timeline_skipped, "map_skipped": map_skipped}

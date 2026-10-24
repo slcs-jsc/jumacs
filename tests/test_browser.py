@@ -39,6 +39,36 @@ def _product(root, model="SOCOL", name="ta"):
     return path
 
 
+def _ready_product(root, model="emac", start=1985, end=2014):
+    folder = root / "products" / "application-ready"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"jumacs_{model}_waccmx_ig2_{start}-{end}_5deg_1km.nc"
+    rng = np.random.default_rng(0)
+    h2o = (1e-6 + rng.random((12, 3, 3))).astype("float32")
+    temperature = (220 + 40 * rng.random((12, 3, 3))).astype("float32")
+    xr.Dataset(
+        {"h2o": (("month", "altitude", "lat"), h2o, {"units": "mol mol-1", "ig2_completed": "true"}),
+         "temperature": (("month", "altitude", "lat"), temperature,
+                         {"units": "K", "ig2_completed": "false"})},
+        coords={"month": range(1, 13), "altitude": [0.0, 60.0, 120.0], "lat": [-30.0, 0.0, 30.0]},
+        attrs={"base_product": f"jumacs_{model}_waccmx_{start}-{end}_5deg_1km.nc"}).to_netcdf(path)
+    return path
+
+
+def test_discover_application_ready_products(tmp_path):
+    from jumacs.browser import discover_application_ready_products
+
+    assert discover_application_ready_products(tmp_path, 1985, 2014) == []
+    product = _ready_product(tmp_path)
+    (tmp_path / "products" / "application-ready" / "jumacs_emac_waccmx_1985-2014_5deg_1km.nc").write_bytes(b"x")
+    (tmp_path / "products" / "application-ready" / "jumacs_emac_waccmx_ig2_1980-2009_5deg_1km.nc").write_bytes(b"x")
+    found = discover_application_ready_products(tmp_path, 1985, 2014)
+    assert found == [("emac", product)]
+    assert discover_application_ready_products(tmp_path, 1985, 2014, model="emac") == [("emac", product)]
+    assert discover_application_ready_products(tmp_path, 1985, 2014, model="cmam") == []
+    assert discover_application_ready_products(tmp_path, 1990, 2014) == []
+
+
 def test_discovery_months_and_paths(tmp_path):
     product = _product(tmp_path)
     assert discover_application_products(tmp_path, 1985, 2014) == [("SOCOL", product)]
@@ -356,6 +386,93 @@ def test_combined_links_honor_product_url_base(monkeypatch):
     monkeypatch.setenv("JUMACS_PRODUCT_URL_BASE", "https://example.org/data/")
     html = browser._html([], 1985, 2014, [], (), ["jumacs_emac_waccmx_1985-2014_5deg_1km.nc"])
     assert 'href="https://example.org/data/jumacs_emac_waccmx_1985-2014_5deg_1km.nc"' in html
+
+
+def test_application_ready_products_are_published_and_linked(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    def placeholder(*args, **kwargs):
+        args[-1].write_bytes(b"PNG")
+
+    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
+    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    monkeypatch.setattr(browser, "_plot_ready_section", placeholder)
+    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
+    monkeypatch.delenv("JUMACS_READY_URL_BASE", raising=False)
+    _product(tmp_path)
+    combined = tmp_path / "products" / "climatology" / "combined"
+    combined.mkdir(parents=True)
+    base = "jumacs_emac_waccmx_1985-2014_5deg_1km.nc"
+    (combined / base).write_bytes(b"combined")
+    ready = _ready_product(tmp_path)
+    name = ready.name
+    report = build_site(1985, 2014, root=tmp_path)
+    site = report["site"]
+    assert report["ready_files"] == [name]
+    published = site / "products" / "application-ready" / name
+    assert published.is_file() and published.read_bytes() == ready.read_bytes()
+    assert (site / "plots-ready" / "EMAC" / "h2o_section.png").read_bytes() == b"PNG"
+    html = (site / "index.html").read_text()
+    assert '<button id="ready-nav">Application-ready</button>' in html
+    assert "['ready-nav', 'ready-view']" in html
+    assert 'id="ready-view"' in html
+    assert "Application-ready products" in html
+    assert "raised-cosine" in html
+    assert "IG2 v3.1" in html
+    assert f'href="products/application-ready/{name}"' in html
+    assert f'href="products/combined/{base}"' in html
+    assert 'src="plots-ready/EMAC/h2o_section.png"' in html
+    assert "IG2 upper completion" in html and "edge-fill completion" in html
+    assert '<section class="ready-product">' in html
+    for link in re.findall(r'(?:href|src)="([^"]+)"', html):
+        if link.startswith(("#", "mailto:")) or "://" in link:
+            continue
+        assert not Path(link).is_absolute() and "://" not in link
+        assert (site / link).is_file()
+
+
+def test_ready_view_is_wired_without_products(tmp_path, monkeypatch):
+    from jumacs import browser
+
+    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+    monkeypatch.delenv("JUMACS_READY_URL_BASE", raising=False)
+    _product(tmp_path)
+    result = build_site(1985, 2014, root=tmp_path)
+    assert result["ready_files"] == []
+    html = (result["site"] / "index.html").read_text()
+    assert '<button id="ready-nav">Application-ready</button>' in html
+    assert "['ready-nav', 'ready-view']" in html
+    assert 'id="ready-view"' in html
+    assert "No application-ready products are published" in html
+    assert "ready-plots" in (result["site"] / "assets" / "style.css").read_text()
+
+
+def test_ready_section_plot_uses_shared_range_and_altitude_axis(tmp_path):
+    from jumacs import browser
+
+    layouts = []
+    real_subplots = browser.plt.subplots
+
+    def subplots(nrows=1, ncols=1, *args, **kwargs):
+        layouts.append((nrows, ncols))
+        return real_subplots(nrows, ncols, *args, **kwargs)
+
+    monkey = browser.plt
+    monkey.subplots = subplots
+    try:
+        rng = np.random.default_rng(3)
+        values = 10 ** rng.random((12, 3, 3))
+        altitude = np.array([0.0, 60.0, 120.0])
+        latitudes = np.array([-45.0, 0.0, 45.0])
+        values[0, 0, 0] = np.nan
+        path = tmp_path / "section.png"
+        browser._plot_ready_section(values, altitude, latitudes, "EMAC", "Water vapour", "ppmv", path)
+    finally:
+        monkey.subplots = real_subplots
+    assert layouts == [(2, 2)]
+    assert path.is_file() and path.stat().st_size > 1000
+
 
 
 def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
