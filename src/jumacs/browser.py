@@ -107,16 +107,41 @@ def _display_scale(values, units):
     return 1.0, units
 
 
-def _color_scale(displayed):
-    """Log scale for strictly positive fields spanning at least two decades."""
-    finite = displayed[np.isfinite(displayed)]
-    if finite.size and float(finite.min()) > 0.0:
-        if float(finite.max()) / float(finite.min()) >= 100.0:
-            return "log"
+LINEAR_SCALE_VARIABLES = frozenset({
+    "N2O", "CH4", "CO2", "CFC-11", "CFC-12", "CCl4", "CH3CCl3",
+    "HCFC-22", "HCFC-141b", "HCFC-142b", "CH3Cl", "CH3Br",
+    "CH2Br2", "CH2BrCl", "CHBr2Cl", "CHBr3", "CHBrCl2",
+    "Halon-1211", "Halon-1301", "Halon-2402",
+    "C2H2", "C2H6", "COS", "CO", "H2", "H2O", "N2", "O2",
+    "temperature", "zonal_wind", "meridional_wind",
+    "TEM_meridional_wind", "TEM_vertical_velocity",
+    "EP_flux_meridional", "EP_flux_vertical", "mean_age",
+    "sulfate_SAD", "PSC_NAT_SAD", "PSC_ice_SAD",
+})
+
+LOG_SCALE_VARIABLES = frozenset({
+    "O", "N", "O3", "O3_strat",
+    "OH", "HO2", "HOCl", "HOBr",
+    "ClO", "Cl2O2", "OClO", "BrO", "BrCl", "Br",
+    "NO", "NO2",
+})
+
+
+def _color_scale(canonical):
+    """Scale policy fixed per canonical variable, identical across all models.
+
+    Explicit linear override wins, then explicit log override, then the
+    default. The default is linear; the decision never depends on any single
+    model's dynamic range, so a variable cannot switch scale between models.
+    """
+    if canonical in LINEAR_SCALE_VARIABLES:
+        return "linear"
+    if canonical in LOG_SCALE_VARIABLES:
+        return "log"
     return "linear"
 
 
-def _plot_section(values, altitude, latitudes, model, label, units, path):
+def _plot_section(values, altitude, latitudes, model, label, units, path, canonical=""):
     """Draw a January/April/July/October latitude-altitude cross section grid."""
     displayed = values[np.array(ZONAL_MONTHS) - 1]
     finite = displayed[np.isfinite(displayed)]
@@ -124,9 +149,12 @@ def _plot_section(values, altitude, latitudes, model, label, units, path):
     if low == high:
         width = max(abs(low) * 0.01, 1e-12)
         low, high = low - width, high + width
-    norm = (matplotlib.colors.LogNorm(vmin=max(low, np.finfo(float).tiny), vmax=high)
-            if _color_scale(displayed) == "log"
-            else matplotlib.colors.Normalize(vmin=low, vmax=high))
+    if _color_scale(canonical) == "log":
+        positive = finite[finite > 0.0]
+        low = max(low, float(positive.min()) if positive.size else np.finfo(float).tiny)
+        norm = matplotlib.colors.LogNorm(vmin=max(low, np.finfo(float).tiny), vmax=high)
+    else:
+        norm = matplotlib.colors.Normalize(vmin=low, vmax=high)
     ceiling = float(altitude.max())
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True, sharey=True, constrained_layout=True)
     for ax, month, panel in zip(axes.flat, ZONAL_MONTHS, displayed):
@@ -235,7 +263,9 @@ metadata. WACCM-X source data extend far above 150 km; its published product is 
 <a class="download" id="product" download>Download NetCDF</a></span></figcaption></figure>
 <p class="plot-note">January, April, July and October climatological means as latitude–altitude cross
 sections on the model's own altitude grid up to its valid top, with one common color scale across the
-four panels (logarithmic where a strictly positive field spans several decades).
+four panels. Scaling is variable-specific: long-lived tracers such as N2O, CH4, CO2, CFCs and related
+halocarbons use linear color scales for easier interpretation of spatial gradients; logarithmic scales
+are reserved for selected short-lived or strongly stratified species with genuinely large dynamic ranges.
 Profile edges are completed by a constant carry of the nearest valid value; interior gaps are preserved
 as missing and never filled, bridged or extrapolated. Variables a model does not provide are simply
 absent from its list.</p>
@@ -495,7 +525,8 @@ def _render_model(model_name, product, root, staging):
             path = _section_path(model_name, stem)
             (staging / path).parent.mkdir(parents=True, exist_ok=True)
             _plot_section(values * scale, altitude, latitudes, model_name,
-                          _display_name(canonical), plot_units, staging / path)
+                          _display_name(canonical), plot_units, staging / path,
+                          canonical=canonical)
             fields.append({"native": stem, "canonical": canonical,
                            "display": _display_name(canonical), "units": units,
                            "source": str(field.attrs.get("source_variable") or stem),

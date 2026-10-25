@@ -65,7 +65,8 @@ def _json(html, script_id):
 
 
 def _no_plot(monkeypatch):
-    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    monkeypatch.setattr(browser, "_plot_section",
+                        lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
 
 
 def test_discover_harmonized_products(tmp_path):
@@ -124,13 +125,60 @@ def test_display_names_are_public_scientific_labels():
         assert _display_name(formula) == formula
 
 
-def test_color_scale_is_log_only_for_positive_multi_decade_fields():
-    assert _color_scale(np.array([230.0, 250.0, 270.0])) == "linear"
-    assert _color_scale(np.full((4, 4), 7.0)) == "linear"
-    assert _color_scale(np.array([-5.0, 1e-9, 1e-6])) == "linear"
-    assert _color_scale(np.array([0.0, 1e-6, 1.0])) == "linear"
-    assert _color_scale(np.array([np.nan, 1e-9, 5e-7])) == "log"
-    assert _color_scale(np.array([1e-6, 1e-3])) == "log"
+def test_color_scale_is_fixed_per_canonical_variable():
+    for name in ("N2O", "CH4", "CO2", "CFC-11", "CFC-12", "CCl4", "CH3CCl3", "HCFC-22",
+                 "CH3Cl", "CH3Br", "Halon-1301", "H2O", "CO",
+                 "temperature", "zonal_wind", "meridional_wind", "mean_age"):
+        assert _color_scale(name) == "linear"
+    for name in ("O3", "O3_strat", "ClO", "BrO", "OH", "NO", "NO2", "O"):
+        assert _color_scale(name) == "log"
+    assert _color_scale("a_species_nobody_modelled_yet") == "linear"
+    assert _color_scale("") == "linear"
+    assert browser.LINEAR_SCALE_VARIABLES.isdisjoint(browser.LOG_SCALE_VARIABLES)
+
+
+def test_scale_choice_does_not_follow_model_dynamic_range(tmp_path):
+    import matplotlib
+    huge = np.logspace(-12, -6, 12 * 3 * 3).reshape(12, 3, 3)
+    tiny = np.linspace(1.0e-8, 1.1e-8, 12 * 3 * 3).reshape(12, 3, 3)
+    used = []
+    real_lognorm = matplotlib.colors.LogNorm
+
+    def spy(*args, **kwargs):
+        used.append("log")
+        return real_lognorm(*args, **kwargs)
+
+    matplotlib.colors.LogNorm = spy
+    try:
+        browser._plot_section(huge, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
+                              "A", "N2O", "ppmv", tmp_path / "n2o_huge.png", canonical="N2O")
+        browser._plot_section(tiny, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
+                              "B", "O3", "ppbv", tmp_path / "o3_tiny.png", canonical="O3")
+    finally:
+        matplotlib.colors.LogNorm = real_lognorm
+    assert used == ["log"]
+
+
+def test_log_scale_floors_zero_cells_to_smallest_positive_value(tmp_path):
+    import matplotlib
+    values = np.full((12, 3, 3), 1e-11)
+    values[0, 0, 0] = 0.0
+    values[3, 1, 1] = 1e-13
+    seen = []
+    real_lognorm = matplotlib.colors.LogNorm
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("vmin", args[0] if args else None))
+        return real_lognorm(*args, **kwargs)
+
+    matplotlib.colors.LogNorm = spy
+    try:
+        browser._plot_section(values, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
+                              "CNRM-MOCAGE", "ClO", "pptv", tmp_path / "clo.png", canonical="ClO")
+    finally:
+        matplotlib.colors.LogNorm = real_lognorm
+    assert seen == [1e-13]
+    assert (tmp_path / "clo.png").is_file()
 
 
 def test_site_links_and_regeneration(tmp_path, monkeypatch):
@@ -399,15 +447,16 @@ def test_plot_section_uses_shared_range_and_altitude_axis(tmp_path):
     spread = np.logspace(-9.0, -6.0, 12 * 3 * 3, dtype="float32").reshape(12, 3, 3)
     logp = tmp_path / "log.png"
     browser._plot_section(spread, np.array([0.0, 30.0, 60.0]),
-                          np.array([-45.0, 0.0, 45.0]), "SOCOL", "O3", "mol mol-1", logp)
+                          np.array([-45.0, 0.0, 45.0]), "SOCOL", "O3", "mol mol-1", logp,
+                          canonical="O3")
     assert logp.is_file() and logp.stat().st_size > 1000
 
 
 def test_plot_units_are_scaled_without_changing_products(tmp_path, monkeypatch):
     captured = {}
 
-    def fake(values, altitude, latitudes, model, label, units, path):
-        captured.update(values=values.copy(), units=units, label=label)
+    def fake(values, altitude, latitudes, model, label, units, path, canonical=""):
+        captured.update(values=values.copy(), units=units, label=label, canonical=canonical)
         path.write_bytes(b"PNG")
 
     monkeypatch.setattr(browser, "_plot_section", fake)
@@ -417,6 +466,7 @@ def test_plot_units_are_scaled_without_changing_products(tmp_path, monkeypatch):
     build_site(1985, 2014, model="SOCOL", root=tmp_path)
     np.testing.assert_allclose(captured["values"], 20.0)
     assert captured["units"] == "ppbv" and captured["label"] == "O3"
+    assert captured["canonical"] == "O3"
 
 
 def test_build_site_requires_at_least_one_worker(tmp_path):
