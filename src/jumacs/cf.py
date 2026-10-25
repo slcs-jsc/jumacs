@@ -365,9 +365,10 @@ def _validate_harmonized(ds, names, statistics, latitude_bands=None):
 
     The vertical contract differs on purpose from the shared pressure grid. Each model keeps the
     vertical extent it can actually resolve: the altitude axis starts at the surface, steps by the
-    configured spacing, and stops at the model's own valid top - there is no common ceiling, no
-    padding, and no pressure coordinate. The valid top is a harmonization difference between models,
-    not an error, so it is checked only against the product's own recorded extent.
+    configured spacing, and stops at the model's own valid top or a documented product cap - there
+    is no common ceiling, no padding, and no pressure coordinate. The valid top is a harmonization
+    difference between models, not an error, so it is checked only against the product's own
+    recorded extent.
     """
     problems = []
     if str(ds.attrs.get("product_type", "")).strip() != "harmonized_climatology":

@@ -2,11 +2,17 @@
 
 Each source model keeps its own scientifically valid vertical range. A product runs
 from the surface at 0 km up to the highest level the model resolves, never padded to a
-common top and never clipped at one. What the models share is the format, not a common
-ceiling: twelve climatological months, five degree latitude bands, one kilometre
-altitude spacing, and one naming and statistics convention. There is no vertical blend
-with WACCM-X and no extension above a model's own top.
+common top. The only deliberate ceiling is the per-model product cap in
+PRODUCT_TOP_CAP_KM, a published truncation that carries its own metadata. What the
+models share is the format, not a common ceiling: twelve climatological months, five
+degree latitude bands, one kilometre altitude spacing, and one naming and statistics
+convention. There is no vertical blend with WACCM-X and no extension above a model's
+own top. Within the published domain every profile is complete: interpolation stays
+inside uninterrupted valid source runs, and the edges of a profile are completed by a
+constant carry of the nearest valid value - never across an internal gap.
 """
+
+import warnings
 
 import numpy as np
 import xarray as xr
@@ -20,6 +26,12 @@ STATISTICS = ("mean", "sigma", "minimum", "maximum")
 GRAVITY = 9.80665
 HARMONIZED_SUBDIR = "harmonized"
 
+# Deliberate published ceilings, per model: a source that resolves higher still is truncated in the
+# product. This is a cap on the published grid, not an extrapolation, and it is recorded in metadata.
+# WACCM-X resolves the thermosphere to nearly 500 km, far above anything the JuMACS/JURASSIC/MPTRAC
+# use cases read; publishing the full extent would only bloat the product.
+PRODUCT_TOP_CAP_KM = {"WACCM-X": 150.0}
+
 # U.S. Standard Atmosphere height of a pressure level, used only as an independent
 # yardstick to tell geopotential (m^2 s^-2) apart from geopotential height (m) when a
 # source mislabels one as the other. It is never used to place data on the altitude grid.
@@ -32,16 +44,39 @@ _PRESSURE_FIELDS = ("air_pressure", "air_pressure_lev", "air_pressure_lev_2")
 
 
 def interpolate_profile(height_km, values, target_km):
-    """Interpolate valid native levels onto a target altitude without extending their range."""
+    """Interpolate valid native levels onto a target altitude.
+
+    Interpolation stays inside each uninterrupted run of valid levels: an interior
+    missing level is never bridged. The two intentional completions are at the edges
+    of a profile: the first valid value is carried down so the profile reaches the
+    surface, and the last valid value is carried up so it reaches the model top. Both
+    are exact constant carries, never slope extrapolations, and neither bridges an
+    internal gap.
+    """
+    height_km = np.asarray(height_km, dtype="float64")
+    values = np.asarray(values, dtype="float64")
+    target_km = np.asarray(target_km, dtype="float64")
+    result = np.full(np.shape(target_km), np.nan)
     good = np.isfinite(height_km) & np.isfinite(values)
-    if good.sum() < 2:
-        return np.full(np.shape(target_km), np.nan)
-    height, values = height_km[good], values[good]
-    order = np.argsort(height)
-    height, values = height[order], values[order]
-    height, unique = np.unique(height, return_index=True)
-    values = values[unique]
-    return np.interp(target_km, height, values, left=np.nan, right=np.nan)
+    if not good.any():
+        return result
+    index = np.flatnonzero(good)
+    breaks = np.flatnonzero(np.diff(index) > 1)
+    segments = []
+    for start, end in zip(np.r_[0, breaks + 1], np.r_[breaks, len(index) - 1]):
+        height, segment = height_km[index[start:end + 1]], values[index[start:end + 1]]
+        order = np.argsort(height)
+        height, unique = np.unique(height[order], return_index=True)
+        segments.append((height, segment[order][unique]))
+    for height, segment in segments:
+        inside = (target_km >= height[0]) & (target_km <= height[-1])
+        if inside.any():
+            result[inside] = np.interp(target_km[inside], height, segment)
+    surface_height, surface_segment = min(segments, key=lambda segment: segment[0][0])
+    result[target_km < surface_height[0]] = surface_segment[0]
+    top_height, top_segment = max(segments, key=lambda segment: segment[0][-1])
+    result[target_km > top_height[-1]] = top_segment[-1]
+    return result
 
 
 def _isa_height_m(pressure_pa):
@@ -196,6 +231,11 @@ def _harmonize_open_dataset(ds, model, config, start_year, end_year, latitude_st
     weights = latitude_band_weights(latitude, band_edges)
 
     top_km = _valid_top_km(z_km)
+    source_top_km = top_km
+    cap_km = PRODUCT_TOP_CAP_KM.get(model)
+    capped = cap_km is not None and top_km > cap_km
+    if capped:
+        top_km = cap_km
     top_level = int(np.floor(top_km))
     if top_level < 1:
         raise ValueError(f"{model}: derived valid top is not above the surface ({top_km:.2f} km)")
@@ -221,12 +261,16 @@ def _harmonize_open_dataset(ds, model, config, start_year, end_year, latitude_st
                 pressure_field = _pressure_values(resolved, field.dims, months, latitudes)
                 altitude_cache[field_dim] = _map_through_log_pressure(z_km, pressure_height_values, pressure_field)
             altitude = altitude_cache[field_dim]
-            gridded = _to_altitude_grid(altitude, np.asarray(field.values, dtype="float64"), target_km)
+            native = np.asarray(field.values, dtype="float64")
+            completion = _edge_completion_attrs(altitude, native, float(target_km[-1]))
+            gridded = _to_altitude_grid(altitude, native, target_km)
             band_values = area_weighted_bands(
                 xr.DataArray(gridded, dims=("month", "altitude", "lat"),
                              coords={"lat": ("lat", latitude)}), weights, band_centers)
+            attrs = _field_attrs(field, canonical, source_variable)
+            attrs.update(completion)
             data[f"{key}_{statistic}"] = (("month", "altitude", "lat"), np.asarray(band_values.values, "float32"),
-                                           _field_attrs(field, canonical, source_variable))
+                                           attrs)
             variable_report[statistic] = int(np.count_nonzero(np.isfinite(gridded)))
         if variable_report:
             carried[key] = variable_report
@@ -253,14 +297,29 @@ def _harmonize_open_dataset(ds, model, config, start_year, end_year, latitude_st
         "vertical_extent_km": [0.0, float(target_km[-1])], "model_valid_top_km": round(top_km, 3),
         "vertical_domain": "each model keeps its own valid top; no common ceiling, no padding, no extension",
         "geopotential_units_corrected": int(sanitized),
-        "missing_policy": "NaN outside a model's valid vertical range; no extrapolation above the model top",
+        "lower_boundary_completion": "constant nearest valid value",
+        "upper_boundary_completion": "constant nearest valid value to model top",
+        "internal_gap_filling": 0,
+        "missing_policy": "NaN only at true internal source gaps; profile edges are completed by a constant "
+                          "carry of the nearest valid value, never by extrapolation or gap bridging",
         "statistics": ", ".join(STATISTICS),
         "history": f"native monthly zonal climatology remapped to a {altitude_step} km altitude grid and "
                    f"{latitude_step:g} degree area-weighted latitude bands",
     }
+    if capped:
+        dataset.attrs.update({
+            "source_valid_top_km": round(source_top_km, 3),
+            "vertical_extent_policy": f"source extent capped at {cap_km:g} km for {model}",
+            "upper_extrapolation": 0,
+            "vertical_domain": f"source extent published up to a deliberate {cap_km:g} km cap; "
+                               f"no padding, no extension above the cap",
+        })
     report = {"model": model, "valid_top_km": round(top_km, 3), "altitude_levels": len(target_km),
               "latitude_bands": len(band_centers), "geopotential_corrected": bool(sanitized),
               "variables": len(carried), "statistics": carried}
+    if capped:
+        report["source_valid_top_km"] = round(source_top_km, 3)
+        report["top_capped_km"] = float(cap_km)
     return {"dataset": dataset, "report": report}
 
 
@@ -271,6 +330,38 @@ def _field_attrs(field, canonical, source_variable):
     for key in ("standard_name", "long_name"):
         if key in field.attrs:
             attrs[key] = field.attrs[key]
+    return attrs
+
+
+def _edge_completion_attrs(altitude_km, values, top_km):
+    """Summarise the source-valid vertical extent and the edge carries a variable needs.
+
+    Altitude and values share the shape (month, level, lat). Where the extent varies
+    between profiles the attributes carry explicit _min/_max pairs instead of a single
+    scalar that would suggest exactness the data do not have.
+    """
+    valid = np.isfinite(altitude_km) & np.isfinite(values)
+    live = valid.any(axis=1)
+    if not live.any():
+        return {}
+    masked = np.where(valid, altitude_km, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN slices are dead profiles, filtered below
+        first = np.nanmin(masked, axis=1)[live]
+        last = np.nanmax(masked, axis=1)[live]
+    lower = np.clip(first, 0.0, top_km)
+    upper = np.clip(top_km - last, 0.0, None)
+
+    def summary(name, lo, hi):
+        if abs(lo - hi) < 1e-6:
+            return {name: round(lo, 3)}
+        return {f"{name}_min": round(lo, 3), f"{name}_max": round(hi, 3)}
+
+    attrs = {}
+    attrs.update(summary("source_valid_bottom_km", float(first.min()), float(first.max())))
+    attrs.update(summary("source_valid_top_km", float(last.min()), float(last.max())))
+    attrs.update(summary("lower_completion_km", float(lower.min()), float(lower.max())))
+    attrs.update(summary("upper_completion_km", float(upper.min()), float(upper.max())))
     return attrs
 
 

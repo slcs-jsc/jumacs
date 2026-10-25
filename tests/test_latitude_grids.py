@@ -184,3 +184,120 @@ def test_the_inventory_recognizes_fields_on_a_second_latitude_grid(tmp_path):
     assert skipped == []
     assert fields["o3"]["dimensionality"] == "2D"
     assert fields["epfy"]["dimensionality"] == "3D"
+
+
+def test_profile_interpolation_carries_the_first_valid_value_down_to_the_surface():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([2.0, 3.0, 4.0])
+    values = np.array([10.0, 20.0, 30.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 5.0))
+    np.testing.assert_allclose(got, [10.0, 10.0, 10.0, 20.0, 30.0])
+    flipped = interpolate_profile(height[::-1], values[::-1], np.arange(0.0, 5.0))
+    np.testing.assert_allclose(flipped, [10.0, 10.0, 10.0, 20.0, 30.0])
+
+
+def test_profile_interpolation_never_bridges_a_missing_level_inside_a_profile():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    values = np.array([1.0, 2.0, np.nan, np.nan, 4.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 6.0))
+    np.testing.assert_allclose(got, [1.0, 2.0, np.nan, np.nan, 4.0, 4.0], equal_nan=True)
+
+
+def test_profile_interpolation_carries_the_last_valid_value_up_to_the_model_top():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([0.0, 1.0, 2.0])
+    values = np.array([5.0, 7.0, 9.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 6.0))
+    np.testing.assert_allclose(got, [5.0, 7.0, 9.0, 9.0, 9.0, 9.0])
+
+
+def test_upper_carry_is_constant_and_uses_the_last_valid_value_not_a_slope():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([0.0, 2.0, 4.0])
+    values = np.array([10.0, 20.0, 30.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 8.0))
+    np.testing.assert_allclose(got, [10.0, 15.0, 20.0, 25.0, 30.0, 30.0, 30.0, 30.0])
+
+
+def test_upper_carry_follows_the_final_run_when_a_profile_has_an_internal_gap():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+    values = np.array([1.0, np.nan, 3.0, np.nan, np.nan, 6.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 7.0))
+    np.testing.assert_allclose(got, [1.0, np.nan, 3.0, np.nan, np.nan, 6.0, 6.0], equal_nan=True)
+
+
+def test_carry_directions_survive_a_descending_native_axis():
+    from jumacs.harmonize import interpolate_profile
+    height = np.array([3.0, 2.0, 1.0])
+    values = np.array([30.0, 20.0, 10.0])
+    got = interpolate_profile(height, values, np.arange(0.0, 6.0))
+    np.testing.assert_allclose(got, [10.0, 10.0, 20.0, 30.0, 30.0, 30.0])
+
+
+def test_completion_attributes_summarise_source_extent_and_edge_carries():
+    from jumacs.harmonize import _edge_completion_attrs
+    altitude = np.zeros((2, 4, 2))
+    altitude[:] = np.array([0.0, 10.0, 20.0, 30.0])[None, :, None]
+    values = np.array([[[np.nan, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0]],
+                       [[np.nan, np.nan], [2.0, np.nan], [4.0, 5.0], [6.0, 7.0]]], dtype="float64")
+    attrs = _edge_completion_attrs(altitude, values, 30.0)
+    assert attrs["source_valid_bottom_km_min"] == 0.0
+    assert attrs["source_valid_bottom_km_max"] == 20.0
+    assert attrs["source_valid_top_km"] == 30.0
+    assert attrs["lower_completion_km_min"] == 0.0
+    assert attrs["lower_completion_km_max"] == 20.0
+    assert attrs["upper_completion_km"] == 0.0
+
+
+def test_completion_attributes_are_independent_of_native_level_order():
+    from jumacs.harmonize import _edge_completion_attrs
+    altitude = np.zeros((1, 4, 1))
+    altitude[0, :, 0] = [0.0, 10.0, 20.0, 30.0]
+    values = np.array([[[np.nan], [2.0], [4.0], [6.0]]], dtype="float64")
+    ascending = _edge_completion_attrs(altitude, values, 40.0)
+    descending = _edge_completion_attrs(altitude[:, ::-1, :].copy(), values[:, ::-1, :].copy(), 40.0)
+    assert ascending == descending
+    assert ascending["source_valid_bottom_km"] == 10.0
+    assert ascending["source_valid_top_km"] == 30.0
+    assert ascending["upper_completion_km"] == 10.0
+
+
+def capped_harmonized(monkeypatch, cap):
+    """The two-grid synthetic product harmonized under a forced product cap on the model."""
+    import jumacs.harmonize as harmonize_module
+    monkeypatch.setattr(harmonize_module, "PRODUCT_TOP_CAP_KM", {"IPSL-CM6A-ATM-LR-REPROBUS": cap})
+    model = "IPSL-CM6A-ATM-LR-REPROBUS"
+    grids = {}
+    parts = [assign_latitude_grid(part("o3", LAT, 1.0), grids, model, "o3"),
+             assign_latitude_grid(height_part(LAT), grids, model, "zg")]
+    product = assemble_product(model, 2000, 2001, parts)
+    return _harmonize_open_dataset(product, model, load_config(model), 2000, 2001, 5, 1)
+
+
+def test_a_product_cap_truncates_the_published_grid_and_says_so_in_metadata(monkeypatch):
+    prepared = capped_harmonized(monkeypatch, 30.0)["dataset"]
+    assert float(prepared.altitude[0]) == 0.0 and float(prepared.altitude[-1]) == 30.0
+    assert prepared.sizes["altitude"] == 31
+    assert prepared.attrs["model_valid_top_km"] == 30.0
+    assert prepared.attrs["source_valid_top_km"] == pytest.approx(round(_isa_height_m(NATIVE).max() / 1000.0, 3))
+    assert prepared.attrs["vertical_extent_policy"] == "source extent capped at 30 km for IPSL-CM6A-ATM-LR-REPROBUS"
+    assert prepared.attrs["upper_extrapolation"] == 0  # netCDF has no boolean; 0 is the false value
+    assert prepared.attrs["lower_boundary_completion"] == "constant nearest valid value"
+    assert prepared.attrs["upper_boundary_completion"] == "constant nearest valid value to model top"
+    assert prepared.attrs["internal_gap_filling"] == 0  # netCDF has no boolean; 0 is the false value
+    assert np.isfinite(prepared["o3_mean"].values).all()
+    assert cf.validate_product(prepared, names=("o3",), kind="harmonized") == []
+
+
+def test_an_uncapped_model_keeps_its_full_extent_and_carries_no_cap_metadata():
+    harmonized = harmonized_grids_dataset()[1]
+    assert float(harmonized.altitude[-1]) == float(np.floor(_isa_height_m(NATIVE).max() / 1000.0))
+    for key in ("vertical_extent_policy", "upper_extrapolation", "source_valid_top_km"):
+        assert key not in harmonized.attrs
+
+
+def test_the_published_cap_is_waccmx_only_and_sits_at_150_km():
+    from jumacs.harmonize import PRODUCT_TOP_CAP_KM
+    assert PRODUCT_TOP_CAP_KM == {"WACCM-X": 150.0}
