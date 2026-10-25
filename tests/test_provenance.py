@@ -2,7 +2,6 @@
 
 import csv
 import json
-import re
 
 import numpy as np
 import xarray as xr
@@ -61,11 +60,7 @@ def test_provenance_writes_catalog_files(tmp_path):
     assert stored["size_units"].startswith("decimal")
 
 
-def test_provenance_page_in_site(tmp_path, monkeypatch):
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_section", placeholder)
+def test_provenance_view_removed_from_site(tmp_path):
     folder = tmp_path / "products/harmonized/SOCOL"
     folder.mkdir(parents=True)
     dataset = xr.Dataset(
@@ -74,24 +69,15 @@ def test_provenance_page_in_site(tmp_path, monkeypatch):
         coords={"month": np.arange(1, 13), "altitude": [0.0, 30.0], "lat": [-45., 45.]})
     dataset.attrs = {"product_type": "harmonized_climatology", "model": "SOCOL",
                      "climatology_period": "1985-2014", "model_valid_top_km": 30.0,
-                     "latitude_band_degrees": 5.0, "altitude_step_km": 1.0}
+                     "source_dataset": "SOCOL v2010", "latitude_band_degrees": 5.0,
+                     "altitude_step_km": 1.0}
     dataset.to_netcdf(folder / "jumacs_socol_1985-2014_5deg_1km.nc")
     report = browser.build_site(1985, 2014, root=tmp_path)
-    assert report["provenance_sources"] == len(config.ready_model_names())
     html = (report["site"] / "index.html").read_text()
-    assert "Data provenance" in html and 'id="provenance-view"' in html
-    assert 'id="provenance-nav"' in html
-    assert 'id="provenance-list"' in html
-    assert 'createElement(\'article\')' in html
-    assert "provenance-body" not in html and "<th>Dataset</th>" not in html
-    embedded = json.loads(re.search(
-        r'<script id="provenance-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
-    datasets = {row["dataset"] for row in embedded}
-    for name in ("CESM2-WACCM", "SOCOL", "GEOSCCM",
-                 "WACCM-X transient 1950-2015"):
-        assert name in datasets
-    assert all(row["persistent_identifier"] for row in embedded)
-    assert (tmp_path / "products/catalog/data_provenance.csv").is_file()
+    assert "provenance-view" not in html and "provenance-data" not in html
+    assert "Data provenance" not in html and "provenance-nav" not in html
+    assert not (tmp_path / "products/catalog/data_provenance.csv").exists()
+    assert "source_dataset" in html and "SOCOL v2010" in html
 
 
 def test_provenance_cli(monkeypatch, capsys):

@@ -283,7 +283,6 @@ def test_a_product_cap_truncates_the_published_grid_and_says_so_in_metadata(monk
     assert prepared.attrs["model_valid_top_km"] == 30.0
     assert prepared.attrs["source_valid_top_km"] == pytest.approx(round(_isa_height_m(NATIVE).max() / 1000.0, 3))
     assert prepared.attrs["vertical_extent_policy"] == "source extent capped at 30 km for IPSL-CM6A-ATM-LR-REPROBUS"
-    assert prepared.attrs["upper_extrapolation"] == 0  # netCDF has no boolean; 0 is the false value
     assert prepared.attrs["lower_boundary_completion"] == "constant nearest valid value"
     assert prepared.attrs["upper_boundary_completion"] == "constant nearest valid value to model top"
     assert prepared.attrs["internal_gap_filling"] == 0  # netCDF has no boolean; 0 is the false value
@@ -294,7 +293,8 @@ def test_a_product_cap_truncates_the_published_grid_and_says_so_in_metadata(monk
 def test_an_uncapped_model_keeps_its_full_extent_and_carries_no_cap_metadata():
     harmonized = harmonized_grids_dataset()[1]
     assert float(harmonized.altitude[-1]) == float(np.floor(_isa_height_m(NATIVE).max() / 1000.0))
-    for key in ("vertical_extent_policy", "upper_extrapolation", "source_valid_top_km"):
+    for key in ("vertical_extent_policy", "upper_extrapolation", "source_valid_top_km",
+                "gradient_extrapolation"):
         assert key not in harmonized.attrs
 
 

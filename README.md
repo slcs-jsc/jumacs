@@ -1,6 +1,6 @@
 # JuMACS
 
-**Jülich Multi-source Atmospheric Climatology and Statistics** provides monthly zonal atmospheric reference climatologies derived from internally consistent chemistry-climate simulations. The default period is **1985–2014 inclusive** (30 years), with `nominal_reference_year=2000` as an epoch label; it does not equate trend-sensitive concentrations with year-2000 abundances. JuMACS applies no detrending, normalization, bias correction, satellite adjustment, model weighting, or ensemble averaging.
+**Jülich Multi-source Atmospheric Climatology and Statistics** provides monthly zonal atmospheric reference climatologies derived from internally consistent chemistry-climate simulations. The default period is **1985–2014 inclusive** (30 years), with `nominal_reference_year=2000` as an epoch label; it does not equate trend-sensitive concentrations with year-2000 abundances. JuMACS applies no detrending, normalization, bias correction, satellite adjustment, model weighting, or ensemble averaging. JuMACS harmonizes climatologies; it does not merge them: every model keeps its own file, its own fields and its own vertical extent.
 
 ## Published data
 
@@ -11,7 +11,7 @@ The reference climatologies, harmonized products and the static data browser are
 
 - One CF-1.13 NetCDF climatology per model and period, on the model's own vertical grid, with `mean`, `sigma`, `minimum`, `maximum` and `n_years` on a climatological month axis.
 - Harmonized products: one validated file per model on a shared format — 5° area-weighted latitude bands, a 1 km altitude grid over the model's own validated vertical range, twelve climatological months with `mean`, `sigma`, `minimum` and `maximum`. Models keep their own valid tops; nothing is merged, blended or padded.
-- A static browser with latitude–altitude cross sections, a data-availability view, downloadable harmonized and native NetCDF products, a provenance catalog and an about page.
+- A static browser (Overview, Models, About, Methodology): one overview table of the harmonized products, and per model a variable list with January/April/July/October latitude–altitude cross sections reaching to each model's own top, NetCDF downloads, and per-variable provenance and vertical-extent metadata. Native climatology files are intermediate products on the processing filesystem, not site downloads.
 - Quality-control and diagnostics tooling: post-download audit, coverage matrices, model comparison and satellite evaluation.
 
 ## Data sources

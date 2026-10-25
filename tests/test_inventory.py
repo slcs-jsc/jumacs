@@ -2,7 +2,6 @@
 
 import csv
 import json
-import re
 
 import numpy as np
 import xarray as xr
@@ -79,25 +78,16 @@ def test_inventory_handles_missing_and_unmatched_products(tmp_path):
     assert not report["skipped"]
 
 
-def test_inventory_in_site_and_cli(tmp_path, monkeypatch, capsys):
+def test_inventory_cli_and_site_omits_inventory_view(tmp_path, monkeypatch, capsys):
     _products(tmp_path)
-    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
     site = browser.build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"]
     html = (site / "index.html").read_text()
-    assert "Data availability" in html and 'id="inventory-search"' in html
-    assert 'data-sort="harmonized_available"' in html
-    assert "Altitude range (km)" in html and "Altitude range" in html
-    assert "Click a column heading to sort (↕)" in html
-    assert "aria-sort" in html and "inventoryDescending" in html
-    rows = json.loads(re.search(r'<script id="inventory-data" type="application/json">(.*?)</script>',
-                                html, re.DOTALL).group(1))
-    ta = next(row for row in rows if row["canonical_variable"] == "temperature")
-    assert ta["native_variable"] == "ta" and ta["dimensionality"] == "3D"
-    assert ta["harmonized_product"] == HARMONIZED_LINK
-    assert ta["native_product"] == f"products/climatology/SOCOL/{product_name('SOCOL', 1985, 2014)}"
-    for link in (ta["harmonized_product"], ta["native_product"]):
-        assert (site / link).is_file()
-        assert not link.startswith("/") and ".." not in link
+    assert "Data availability" not in html and 'id="inventory-search"' not in html
+    assert 'id="inventory-data"' not in html and "inventoryDescending" not in html
+    for stale in ("products/combined", "products/application-ready", "plots-ready",
+                  "compact_catalog.json", "comparison_catalog.json"):
+        assert stale not in html
+    assert "products/harmonized/SOCOL/jumacs_socol_1985-2014_5deg_1km.nc" in html
     monkeypatch.setattr(inventory, "build_inventory",
                         lambda start, end, *, model, root=None: {
                             "summary": {"harmonized_models": 1, "per_model": {"SOCOL": {"total": 2}}}})

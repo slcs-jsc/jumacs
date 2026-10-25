@@ -310,7 +310,6 @@ def _harmonize_open_dataset(ds, model, config, start_year, end_year, latitude_st
         dataset.attrs.update({
             "source_valid_top_km": round(source_top_km, 3),
             "vertical_extent_policy": f"source extent capped at {cap_km:g} km for {model}",
-            "upper_extrapolation": 0,
             "vertical_domain": f"source extent published up to a deliberate {cap_km:g} km cap; "
                                f"no padding, no extension above the cap",
         })
