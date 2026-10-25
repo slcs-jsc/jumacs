@@ -9,4 +9,3 @@ module load Stages/2026 GCCcore/14.3.0 SciPy-Stack/2025b netcdf4-python/1.7.2 Be
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 export MPLBACKEND=Agg
 python3 scripts/plot_comparisons.py
-python3 scripts/build_index.py

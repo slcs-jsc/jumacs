@@ -30,8 +30,8 @@ if [[ "$remote_source" == false && ! -d "$source" ]]; then
   echo "Mirror source is missing: $source" >&2
   exit 2
 fi
-if [[ "$mode" == web && ( ! -f "$source/index.html" || ! -d "$source/products/application" ) ]]; then
-  echo "Web mirror requires a generated application site with index.html and products/application/" >&2
+if [[ "$mode" == web && ( ! -f "$source/index.html" || ! -d "$source/products/harmonized" ) ]]; then
+  echo "Web mirror requires a generated site with index.html and products/harmonized/" >&2
   exit 2
 fi
 

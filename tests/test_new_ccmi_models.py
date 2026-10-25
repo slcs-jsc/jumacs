@@ -8,9 +8,8 @@ import pytest
 import xarray as xr
 
 from jumacs import cf
-from jumacs.application import build_application_product
 from jumacs.build import build_model, configured_variables
-from jumacs.config import load_config
+from jumacs.config import load_config, model_metadata
 from jumacs.download import select_files
 from jumacs.reader import open_source, source_files
 from jumacs.zonal import zonal_mean
@@ -29,7 +28,7 @@ def _raw_file(root, model, family, name, dataset):
 
 
 @pytest.mark.parametrize("model", MODELS)
-def test_new_model_native_and_application_products(tmp_path, monkeypatch, model):
+def test_new_model_native_and_harmonized_products(tmp_path, monkeypatch, model):
     import jumacs.build as build_module
     import jumacs.climatology as climatology_module
     import jumacs.config as config_module
@@ -54,6 +53,11 @@ def test_new_model_native_and_application_products(tmp_path, monkeypatch, model)
     temperature = xr.Dataset({"ta": (dimensions, np.full((24, 3, 3) + ((1,) if model == "CCSR-NIES-MIROC32" else ()), 230.),
                                     {"units": "K"})}, coords=coordinates)
     _raw_file(tmp_path, model, "AmonZ", "ta", temperature)
+    zg_shape = (24, 3, 3) + ((1,) if model == "CCSR-NIES-MIROC32" else ())
+    zg_profile = np.array([0., 157000., 490500.]).reshape((1, 3) + (1,) * (len(dimensions) - 2))
+    geopotential = xr.Dataset({"zg": (dimensions, np.broadcast_to(zg_profile, zg_shape).copy(),
+                                      {"units": "m2 s-2"})}, coords=coordinates)
+    _raw_file(tmp_path, model, "AmonZ", "zg", geopotential)
     longitude = [0., 90., 180., 270.]
     surface_dims = ("time", "lat", "lon")
     surface_coords = {"time": time, "lat": latitude, "lon": longitude}
@@ -66,19 +70,28 @@ def test_new_model_native_and_application_products(tmp_path, monkeypatch, model)
 
     assert source_files(model, "temperature")[0].parent.parent.name == "AmonZ"
     assert source_files(model, "surface_pressure")[0].parent.parent.name == "Amon"
-    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure"])
+    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure", "geopotential_height"])
     assert report["ok"] is True
     with xr.open_dataset(report["product"], decode_cf=False) as native:
-        cf.assert_product(native, names=("ta", "ps"), kind="individual")
+        cf.assert_product(native, names=("ta", "ps", "zg"), kind="individual")
         assert native["ta_mean"].ndim == 3
         assert native["ps_mean"].dims == ("time", "lat")
-    path = build_application_product(model, 1985, 1986, extend=False, root=tmp_path)
-    with xr.open_dataset(path, decode_cf=False) as application:
-        cf.assert_product(application, names=("ta", "ps"), kind="application")
-        assert application.sizes["pressure"] == 124
-        assert application.sizes["lat"] == 36
-        assert application["ta_mean"].ndim == 3
-        assert application["ps_mean"].ndim == 2
+    import jumacs.harmonize as harmonize_module
+    monkeypatch.setattr(harmonize_module, "ROOT", tmp_path)
+    path, _ = harmonize_module.harmonize_model(model, 1985, 1986)
+    assert path.name == f"jumacs_{model_metadata(model)['slug']}_1985-1986_5deg_1km.nc"
+    with xr.open_dataset(path, decode_cf=False) as harmonized:
+        cf.assert_product(harmonized, names=("temperature",), kind="harmonized")
+        assert harmonized.sizes["lat"] == 36
+        assert harmonized["temperature_mean"].dims == ("month", "altitude", "lat")
+        assert "surface_pressure_mean" not in harmonized
+        assert "geopotential_height_mean" not in harmonized
+        values = harmonized["temperature_mean"].values
+        assert np.isfinite(values).any()
+        np.testing.assert_allclose(values[np.isfinite(values)], 230.0)
+        top = float(harmonized.attrs["model_valid_top_km"])
+        assert 49.9 < top < 50.2
+        assert harmonized.sizes["altitude"] == int(np.floor(top)) + 1
 
 
 @pytest.mark.parametrize("model", MODELS)
@@ -143,7 +156,7 @@ def test_cesm2_waccm_archive_family_selection_prefers_amonz(monkeypatch):
     assert {(row["variable"], row["family"]) for row in selected} == {("ta", "AmonZ"), ("ps", "Amon")}
 
 
-def test_cesm2_waccm_native_and_application_products(tmp_path, monkeypatch):
+def test_cesm2_waccm_native_and_harmonized_products(tmp_path, monkeypatch):
     import jumacs.build as build_module
     import jumacs.climatology as climatology_module
     import jumacs.config as config_module
@@ -162,6 +175,13 @@ def test_cesm2_waccm_native_and_application_products(tmp_path, monkeypatch):
                 "plev": ("plev", [100000., 10000., 3.],
                          {"units": "Pa", "standard_name": "air_pressure", "positive": "down"})})
     _raw_file(tmp_path, model, "AmonZ", "ta", temperature)
+    geopotential = xr.Dataset(
+        {"zg": (("time", "plev", "lat"), np.broadcast_to(
+            np.array([0., 157000., 490500.]).reshape(1, 3, 1), (24, 3, 3)).copy(), {"units": "m2 s-2"})},
+        coords={"time": time, "lat": [-45., 0., 45.],
+                "plev": ("plev", [100000., 10000., 3.],
+                         {"units": "Pa", "standard_name": "air_pressure", "positive": "down"})})
+    _raw_file(tmp_path, model, "AmonZ", "zg", geopotential)
     pressure = xr.Dataset(
         {"ps": (("time", "lat", "lon"), np.full((24, 3, 4), 100000.), {"units": "Pa"})},
         coords={"time": time, "lat": [-45., 0., 45.], "lon": [0., 90., 180., 270.]})
@@ -169,17 +189,28 @@ def test_cesm2_waccm_native_and_application_products(tmp_path, monkeypatch):
 
     assert source_files(model, "temperature")[0].parent.parent.name == "AmonZ"
     assert source_files(model, "surface_pressure")[0].parent.parent.name == "Amon"
-    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure"])
+    report = build_model(model, 1985, 1986, ["temperature", "surface_pressure", "geopotential_height"])
     assert report["ok"] is True
     with xr.open_dataset(report["product"], decode_cf=False) as native:
-        cf.assert_product(native, names=("ta", "ps"), kind="individual")
+        cf.assert_product(native, names=("ta", "ps", "zg"), kind="individual")
         assert native["ta_mean"].ndim == 3
         assert native["ps_mean"].dims == ("time", "lat")
-    path = build_application_product(model, 1985, 1986, extend=False, root=tmp_path)
-    with xr.open_dataset(path, decode_cf=False) as application:
-        cf.assert_product(application, names=("ta", "ps"), kind="application")
-        assert application.sizes["pressure"] == 124
-        assert application.sizes["lat"] == 36
+    import jumacs.harmonize as harmonize_module
+    monkeypatch.setattr(harmonize_module, "ROOT", tmp_path)
+    path, _ = harmonize_module.harmonize_model(model, 1985, 1986)
+    assert path.name == f"jumacs_{model_metadata(model)['slug']}_1985-1986_5deg_1km.nc"
+    with xr.open_dataset(path, decode_cf=False) as harmonized:
+        cf.assert_product(harmonized, names=("temperature",), kind="harmonized")
+        assert harmonized.sizes["lat"] == 36
+        assert harmonized["temperature_mean"].dims == ("month", "altitude", "lat")
+        assert "surface_pressure_mean" not in harmonized
+        assert "geopotential_height_mean" not in harmonized
+        values = harmonized["temperature_mean"].values
+        assert np.isfinite(values).any()
+        np.testing.assert_allclose(values[np.isfinite(values)], 230.0)
+        top = float(harmonized.attrs["model_valid_top_km"])
+        assert 49.9 < top < 50.2
+        assert harmonized.sizes["altitude"] == int(np.floor(top)) + 1
 
 
 def test_cesm2_waccm_epfz_near_fill_escapees_are_missing_before_statistics(tmp_path):

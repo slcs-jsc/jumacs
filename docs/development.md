@@ -24,8 +24,9 @@ jumacs build --model CMAM --start-year 1985 --end-year 2014     # zonal series +
 jumacs quicklook --model CMAM --start-year 1985 --end-year 2014
 jumacs build --model CMAM,SOCOL --start-year 1985 --end-year 2014   # several models in one call
 jumacs build --model all              # every ready model with validated zonal processing
-jumacs application --model SOCOL --start-year 1985 --end-year 2014  # pressure-grid product
-jumacs browse --start-year 1985 --end-year 2014  # static site from existing application products
+jumacs harmonize --model SOCOL --start-year 1985 --end-year 2014  # 1 km altitude-grid product over SOCOL's valid range
+jumacs harmonize --model all            # every ready model plus WACCM-X
+jumacs browse --start-year 1985 --end-year 2014  # static site from existing harmonized products
 jumacs download --model GEOSCCM --all-files  # complete-archive mirror plan (all families/members, latest versions)
 jumacs download-audit  # audit all mirror plans, write products/comparison/download_plan_summary.{csv,md}
 ```
@@ -46,9 +47,9 @@ sbatch -A YOUR_ACCOUNT scripts/slurm/build.sh EMAC 1985 2014
 sbatch -A YOUR_ACCOUNT scripts/slurm/compare.sh 1985 2014
 sbatch -A YOUR_ACCOUNT scripts/slurm/plot_catalog.sh
 sbatch -A YOUR_ACCOUNT scripts/slurm/plot_comparisons.sh
-sbatch -A YOUR_ACCOUNT scripts/slurm/compact.sh all
+srun -c 1 jumacs harmonize --model all   # after builds finish; a serial per-model step
 ```
 
 `scripts/slurm/build.sh` is the normal submission path because it wraps `jumacs build`: it reuses existing monthly zonal intermediates, builds only what is missing, and validates the climatology afterwards. The per-stage wrappers (`scripts/slurm/zonal_model.sh`, `zonal_array.sh`, `climatology.sh`, `submit_processing.py`) and the matching `jumacs zonal` / `jumacs climatology` commands, `make zonal MODEL=...` and `make climatology MODEL=...` are advanced entry points for re-running one stage after a failed build or for debugging a single variable; running `climatology.sh` alone skips the coverage checks that `build` performs.
 
-For WACCM-X, first inspect and plan download, then transfer the selected monthly `_zm.nc` files from JUDAC. Afterward, submit zonal tasks by variable and its climatology. `make inspect`, `make test`, `make download MODEL=...` (plan), `make download-execute MODEL=...`, `make build MODEL=...`, `make zonal MODEL=...`, `make climatology MODEL=...`, `make coverage MODEL=...`, and `make compare` are shortcuts. The default 1985–2014 reference period is defined only in `config/climatology.yaml`; the Makefile and CLI omit year flags when unset and read that file, and a model YAML may add a `period:` override. `--start-year` and `--end-year` allow any covered inclusive period. The monthly zonal series remain intact.
+For WACCM-X, first inspect and plan download, then transfer the selected monthly `_zm.nc` files from JUDAC. Afterward, submit zonal tasks by variable and its climatology. `make inspect`, `make test`, `make download MODEL=...` (plan), `make download-execute MODEL=...`, `make build MODEL=...`, `make zonal MODEL=...`, `make climatology MODEL=...`, `make harmonize MODEL=...`, `make coverage MODEL=...`, and `make compare` are shortcuts. The default 1985–2014 reference period is defined only in `config/climatology.yaml`; the Makefile and CLI omit year flags when unset and read that file, and a model YAML may add a `period:` override. `--start-year` and `--end-year` allow any covered inclusive period. The monthly zonal series remain intact.

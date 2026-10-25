@@ -155,8 +155,6 @@ def main():
                                 months=len(years), views=views))
             print(model, var, ",".join(views), flush=True)
     (DEST / "catalog.json").write_text(json.dumps(records, indent=2, ensure_ascii=False))
-    from build_index import build_index
-    print("INDEX", build_index(), flush=True)
     print("CATALOG", len(records), "variables", flush=True)
 
 

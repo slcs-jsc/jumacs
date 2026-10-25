@@ -21,9 +21,9 @@ from .vertical import is_latitude_dimension
 CONVENTIONS = "CF-1.13"
 BOUNDS_DIMENSION = "nv"
 STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum", "n_years")
-# An application-grid product holds no sample count: a remapped or extended statistic is a merge of
-# climatologies, so the years behind it belong to the source products and not to the merged field.
-APPLICATION_STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum")
+# A harmonized product holds no sample count: a statistic placed on the shared altitude grid is
+# interpolated through the vertical rather than sampled year by year, so a year count is not carried.
+HARMONIZED_STATISTIC_ORDER = ("mean", "sigma", "minimum", "maximum")
 STATISTIC_DTYPES = {"mean": "float32", "sigma": "float32", "minimum": "float32",
                     "maximum": "float32", "n_years": "int16"}
 
@@ -341,70 +341,113 @@ def _validate_native_vertical(ds, names, statistics, grid=None):
     return problems
 
 
-def _validate_application_vertical(ds, names, statistics, grid, latitude_bands=None):
-    """A combined product: the shared pressure grid, optionally the fixed latitude bands."""
-    problems = []
-    grid = grid or {}
-    coordinate = grid.get("coordinate", "pressure")
-    if _pressure_fields(ds):
-        problems.append(f"per-variable pressure fields must not be published on the application grid; "
-                        f"{coordinate} is shared")
-    if coordinate not in ds.coords:
-        problems.append(f"the shared {coordinate} coordinate is missing")
-        return problems
-    pressure = ds[coordinate]
-    if pressure.dtype != np.float64:
-        problems.append(f"{coordinate} must be float64, found {pressure.dtype}")
-    if pressure.attrs.get("standard_name") != PRESSURE_FIELD or pressure.attrs.get("units") != "Pa":
-        problems.append(f"{coordinate} must be air_pressure in Pa")
-    if pressure.attrs.get("positive") != "down" or pressure.attrs.get("axis") != "Z":
-        problems.append(f"{coordinate} must carry positive=down and axis=Z")
-    if grid.get("levels") is not None:
-        expected_levels = np.asarray(grid["levels"], float)
-        if pressure.size != expected_levels.size:
-            problems.append(f"{coordinate} has {pressure.size} levels, the application grid has "
-                            f"{expected_levels.size}; the product was built on another vertical grid and must be "
-                            f"rebuilt")
-        elif not np.allclose(pressure.values, expected_levels):
-            problems.append(f"{coordinate} is not the configured application grid; the product was built on "
-                            "another vertical grid and must be rebuilt")
-    if latitude_bands is not None and ds.sizes.get("lat") != latitude_bands:
-        problems.append(f"lat must hold the {latitude_bands} fixed latitude bands, found {ds.sizes.get('lat')}")
-    for field in sorted(_statistic_fields(names, statistics) & set(ds.data_vars)):
-        variable = ds[field]
-        if variable.ndim == 3 and list(variable.dims) != ["time", coordinate, "lat"]:
-            problems.append(f"{field} must be ordered (time, {coordinate}, lat), found {list(variable.dims)}")
-    return problems
-
-
 def default_statistics(kind):
     """The statistics a product of this kind is expected to carry.
 
-    A native individual climatology reports how many years stand behind each statistic; an
-    application-grid product does not, because Stage 1 and Stage 2 both leave the count out.
+    A native individual climatology reports how many years stand behind each statistic; a
+    harmonized product on the shared altitude grid does not, because the field is remapped
+    through the vertical rather than sampled year by year, so the count is left out.
     """
     if kind == "individual":
         return STATISTIC_ORDER
-    if kind == "application":
-        return APPLICATION_STATISTIC_ORDER
-    raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'application'")
+    if kind == "harmonized":
+        return HARMONIZED_STATISTIC_ORDER
+    raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'harmonized'")
+
+
+HARMONIZED_VERTICAL_COORDINATE = "altitude"
+HARMONIZED_LATITUDE_DIMENSION = "lat"
+HARMONIZED_MONTH_DIMENSION = "month"
+
+
+def _validate_harmonized(ds, names, statistics, latitude_bands=None):
+    """A harmonized product: 12 months, a per-model one-kilometre altitude grid, fixed latitude bands.
+
+    The vertical contract differs on purpose from the shared pressure grid. Each model keeps the
+    vertical extent it can actually resolve: the altitude axis starts at the surface, steps by the
+    configured spacing, and stops at the model's own valid top - there is no common ceiling, no
+    padding, and no pressure coordinate. The valid top is a harmonization difference between models,
+    not an error, so it is checked only against the product's own recorded extent.
+    """
+    problems = []
+    if str(ds.attrs.get("product_type", "")).strip() != "harmonized_climatology":
+        problems.append(f"product_type must be 'harmonized_climatology', found {ds.attrs.get('product_type')!r}")
+    if ds.sizes.get(HARMONIZED_MONTH_DIMENSION) != 12:
+        problems.append(f"the {HARMONIZED_MONTH_DIMENSION} axis must hold 12 climatological months, found "
+                        f"{ds.sizes.get(HARMONIZED_MONTH_DIMENSION)}")
+    elif not np.array_equal(np.asarray(ds[HARMONIZED_MONTH_DIMENSION].values), np.arange(1, 13)):
+        problems.append(f"{HARMONIZED_MONTH_DIMENSION} must run 1..12")
+    coordinate = HARMONIZED_VERTICAL_COORDINATE
+    if coordinate not in ds.coords:
+        problems.append(f"the shared {coordinate} coordinate is missing")
+        return problems
+    altitude = ds[coordinate]
+    if altitude.dtype != np.float64:
+        problems.append(f"{coordinate} must be float64, found {altitude.dtype}")
+    if altitude.attrs.get("units") != "km":
+        problems.append(f"{coordinate} must be in km, found {altitude.attrs.get('units')!r}")
+    if altitude.attrs.get("axis") != "Z" or altitude.attrs.get("positive") != "up":
+        problems.append(f"{coordinate} must carry axis=Z and positive=up")
+    values = np.asarray(altitude.values, dtype="float64")
+    if values.size and values[0] != 0.0:
+        problems.append(f"{coordinate} must start at the surface (0 km), found {values[0]}")
+    if values.size > 1:
+        steps = np.diff(values)
+        if not bool(np.all(steps > 0)):
+            problems.append(f"{coordinate} must increase strictly and monotonically")
+        elif not bool(np.allclose(steps, steps[0])):
+            problems.append(f"{coordinate} must be evenly spaced, found irregular steps")
+    reported_top = ds.attrs.get("model_valid_top_km")
+    if reported_top is None:
+        problems.append("model_valid_top_km must record the model's own derived vertical top")
+    elif values.size and not (0.0 < float(reported_top) and values[-1] <= float(reported_top) + 1e-6):
+        problems.append(f"{coordinate} reaches {values[-1]} km but model_valid_top_km is {reported_top}; the axis "
+                        f"must stop at the model's own valid top")
+    if _pressure_fields(ds):
+        problems.append("a harmonized product is placed on altitude and must not publish pressure fields")
+    if HARMONIZED_LATITUDE_DIMENSION not in ds.coords:
+        problems.append("lat is missing")
+    else:
+        lat = ds[HARMONIZED_LATITUDE_DIMENSION]
+        if lat.dtype != np.float64:
+            problems.append(f"lat must be float64, found {lat.dtype}")
+        if lat.attrs.get("units") != "degrees_north":
+            problems.append(f"lat must be degrees_north, found {lat.attrs.get('units')!r}")
+        if latitude_bands is not None and ds.sizes.get("lat") != latitude_bands:
+            problems.append(f"lat must hold the {latitude_bands} fixed latitude bands, found {ds.sizes.get('lat')}")
+        latitudes = np.asarray(lat.values, dtype="float64")
+        if latitudes.size > 1 and not bool(np.all(np.diff(latitudes) > 0)):
+            problems.append("lat latitude band centres must increase strictly")
+    for field in sorted(_statistic_fields(names, statistics) & set(ds.data_vars)):
+        variable = ds[field]
+        if variable.dtype != np.float32:
+            problems.append(f"{field} must be float32, found {variable.dtype}")
+        if not variable.attrs.get("units"):
+            problems.append(f"{field} must carry its units")
+        standard_name = variable.attrs.get("standard_name", "")
+        if standard_name and valid_standard_name(standard_name) is None:
+            problems.append(f"{field} carries an unrecognised standard_name {standard_name!r}")
+        if list(variable.dims) != [HARMONIZED_MONTH_DIMENSION, coordinate, HARMONIZED_LATITUDE_DIMENSION]:
+            problems.append(f"{field} must be ordered (month, {coordinate}, lat), found {list(variable.dims)}")
+    return problems
 
 
 def validate_product(ds, names=(), grid=None, statistics=None, kind="individual", latitude_bands=None):
     """Structural and methodological checks on a written product (no external checker).
 
-    ``kind`` selects the vertical contract: ``"individual"`` for one model's own
-    climatology, which stays on the native grid and publishes the pressure of its
-    levels; ``"application"`` for a combined product on the shared grid. It also picks
-    the statistics a product must carry, so validating an application product needs no
-    extra argument; an explicit ``statistics`` always overrides that choice.
+    ``kind`` selects the vertical contract: ``"individual"`` for one model's own climatology,
+    which stays on the native grid and publishes the pressure of its levels; ``"harmonized"`` for
+    a remapped product on the per-model altitude grid and fixed latitude bands, which carries a
+    month axis instead of a CF time axis and therefore skips the common time checks. It also picks
+    the statistics a product must carry; an explicit ``statistics`` always overrides that choice.
     """
     expected = default_statistics(kind) if statistics is None else tuple(statistics)
+    if kind == "harmonized":
+        return _validate_harmonized(ds, names, expected, latitude_bands)
+    if kind != "individual":
+        raise ValueError(f"unknown product kind {kind!r}; expected 'individual' or 'harmonized'")
     problems = _validate_common(ds, names, expected)
-    if kind == "individual":
-        problems.extend(_validate_native_vertical(ds, names, expected, grid))
-    else:
-        problems.extend(_validate_application_vertical(ds, names, expected, grid, latitude_bands))
+    problems.extend(_validate_native_vertical(ds, names, expected, grid))
     return problems
 
 

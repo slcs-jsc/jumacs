@@ -65,14 +65,17 @@ def test_provenance_page_in_site(tmp_path, monkeypatch):
     def placeholder(*args, **kwargs):
         args[-1].write_bytes(b"PNG")
 
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    folder = tmp_path / "products/application/SOCOL"
+    monkeypatch.setattr(browser, "_plot_section", placeholder)
+    folder = tmp_path / "products/harmonized/SOCOL"
     folder.mkdir(parents=True)
-    xr.Dataset({"ta_mean": (("time", "pressure", "lat"), np.ones((12, 2, 2)), {"units": "K"})},
-               coords={"time": range(12), "pressure": [10000., 1000.],
-                       "lat": [-45., 45.]}).to_netcdf(
-        folder / "jumacs_socol_application_climatology_1985-2014.nc")
+    dataset = xr.Dataset(
+        {"ta_mean": (("month", "altitude", "lat"), np.ones((12, 2, 2), "float32"),
+                     {"units": "K", "canonical_variable": "temperature", "source_variable": "ta"})},
+        coords={"month": np.arange(1, 13), "altitude": [0.0, 30.0], "lat": [-45., 45.]})
+    dataset.attrs = {"product_type": "harmonized_climatology", "model": "SOCOL",
+                     "climatology_period": "1985-2014", "model_valid_top_km": 30.0,
+                     "latitude_band_degrees": 5.0, "altitude_step_km": 1.0}
+    dataset.to_netcdf(folder / "jumacs_socol_1985-2014_5deg_1km.nc")
     report = browser.build_site(1985, 2014, root=tmp_path)
     assert report["provenance_sources"] == len(config.ready_model_names())
     html = (report["site"] / "index.html").read_text()

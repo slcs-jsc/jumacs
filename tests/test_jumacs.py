@@ -212,47 +212,6 @@ def test_capabilities_gate_commands():
         assert has_capability(stub, "compact_waccmx")
 
 
-def test_compact_rejects_models_without_capability():
-    import pytest
-    from jumacs.compact import build_compact
-    with pytest.raises(ValueError, match="not registered for compact"):
-        build_compact("MIROC-ES2H")
-    with pytest.raises(ValueError, match="not registered for compact"):
-        build_compact("WACCM-X")
-
-
-def test_compact_writer_covers_models_beyond_emac_geosccm(tmp_path, monkeypatch):
-    import numpy as np
-    import xarray as xr
-    from jumacs import compact
-
-    def synthetic_read(model, canonical, start_year, end_year):
-        if canonical not in ("geopotential_height", "O3"):
-            return None
-        levels = np.linspace(1.0, 90.0 if model != "WACCM-X" else 150.0, 40)
-        base = levels * 1000.0 if canonical == "geopotential_height" else np.full(levels.shape, 1e-5)
-        field = xr.DataArray(
-            np.broadcast_to(base.reshape(1, 40, 1), (12, 40, 36)),
-            dims=("month", "lev", "lat"),
-            coords={"month": np.arange(1, 13), "lev": np.arange(40, dtype="float64"),
-                    "lat": np.arange(-87.5, 88.0, 5.0)},
-            attrs={"units": "mol mol-1" if canonical == "O3" else "gpm"})
-        ds = xr.Dataset({"mean": field})
-        ds.attrs["output_units"] = field.attrs["units"]
-        return ds
-
-    monkeypatch.setattr(compact, "_read", synthetic_read)
-    monkeypatch.setattr(compact, "ROOT", tmp_path)
-    for model in ("SOCOL", "CMAM", "EMAC"):
-        dest = compact.build_compact(model)
-        assert dest.name == f"jumacs_{model.lower()}_waccmx_1985-2014_5deg_1km.nc"
-        with xr.open_dataset(dest) as ds:
-            assert ds.attrs["lower_model"] == model
-            assert set(ds.dims.values()) == {12, 121, 35}
-            assert ds["o3"].attrs["source_status"] == "lower_model_to_waccmx"
-            assert np.isfinite(ds["o3"].values[:, 55:66, :]).all()
-
-
 def test_model_period_defaults_to_reference_configuration():
     from jumacs.config import model_period
     assert model_period("GEOSCCM") == {"start_year": 1985, "end_year": 2014}

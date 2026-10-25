@@ -1,174 +1,83 @@
-"""Static application-product browser wiring and regeneration."""
+"""Static harmonized-product browser wiring and regeneration."""
 
 import json
 import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 import xarray as xr
 
+from jumacs import browser
 from jumacs.browser import (
-    PLOT_LATITUDE_EDGES,
-    PLOT_PRESSURES_HPA,
+    HARMONIZED_NAME,
     ZONAL_MONTHS,
-    _band_samples,
     _display_name,
     _display_scale,
-    _height_to_pressure,
-    _map_values,
-    _plot_map,
-    _plot_paths,
-    _plot_zonal,
-    _pressure_to_height,
-    _reference_year_source,
+    _human_size,
+    _section_path,
     build_site,
-    discover_application_products,
+    discover_harmonized_products,
 )
 from jumacs.cli import main
+from jumacs.climatology import product_name
+
+NAME = "jumacs_socol_1985-2014_5deg_1km.nc"
 
 
-def _product(root, model="SOCOL", name="ta"):
-    folder = root / "products" / "application" / model
+def _product(root, model="SOCOL", slug="socol", start=1985, end=2014, months=12, fields=None):
+    folder = root / "products" / "harmonized" / model
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"jumacs_{model.lower()}_application_climatology_1985-2014.nc"
-    values = np.ones((12, 4, 3))
-    xr.Dataset({f"{name}_mean": (("time", "pressure", "lat"), values, {"units": "K"}),
-                "surface_mean": (("time", "lat"), np.ones((12, 3)))},
-               coords={"time": range(12), "pressure": [10000., 1000., 100., 10.],
-                       "lat": [-62.5, 2.5, 57.5]}).to_netcdf(path)
+    path = folder / f"jumacs_{slug}_{start}-{end}_5deg_1km.nc"
+    if fields is None:
+        fields = {"ta_mean": (("month", "altitude", "lat"), np.full((months, 3, 3), 230.0, "float32"),
+                              {"units": "K", "canonical_variable": "temperature", "source_variable": "ta"})}
+    dataset = xr.Dataset(fields, coords={"month": np.arange(1, months + 1),
+                                         "altitude": [0.0, 30.0, 60.0], "lat": [-87.5, 0.0, 87.5]})
+    dataset.attrs = {"product_type": "harmonized_climatology", "model": model,
+                     "display_name": "SOCOL stratosphere" if model == "SOCOL" else model,
+                     "climatology_period": f"{start}-{end}", "model_valid_top_km": 60.0,
+                     "latitude_band_degrees": 5.0, "altitude_step_km": 1.0}
+    dataset.to_netcdf(path)
     return path
 
 
-def _ready_product(root, model="emac", start=1985, end=2014):
-    folder = root / "products" / "application-ready"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"jumacs_{model}_waccmx_ig2_{start}-{end}_5deg_1km.nc"
-    rng = np.random.default_rng(0)
-    h2o = (1e-6 + rng.random((12, 3, 3))).astype("float32")
-    temperature = (220 + 40 * rng.random((12, 3, 3))).astype("float32")
-    xr.Dataset(
-        {"h2o": (("month", "altitude", "lat"), h2o, {"units": "mol mol-1", "ig2_completed": "true"}),
-         "temperature": (("month", "altitude", "lat"), temperature,
-                         {"units": "K", "ig2_completed": "false"})},
-        coords={"month": range(1, 13), "altitude": [0.0, 60.0, 120.0], "lat": [-30.0, 0.0, 30.0]},
-        attrs={"base_product": f"jumacs_{model}_waccmx_{start}-{end}_5deg_1km.nc"}).to_netcdf(path)
-    return path
+def _json(html, script_id):
+    return json.loads(re.search(rf'<script id="{script_id}" type="application/json">(.*?)</script>',
+                                html, re.DOTALL).group(1))
 
 
-def test_discover_application_ready_products(tmp_path):
-    from jumacs.browser import discover_application_ready_products
-
-    assert discover_application_ready_products(tmp_path, 1985, 2014) == []
-    product = _ready_product(tmp_path)
-    (tmp_path / "products" / "application-ready" / "jumacs_emac_waccmx_1985-2014_5deg_1km.nc").write_bytes(b"x")
-    (tmp_path / "products" / "application-ready" / "jumacs_emac_waccmx_ig2_1980-2009_5deg_1km.nc").write_bytes(b"x")
-    found = discover_application_ready_products(tmp_path, 1985, 2014)
-    assert found == [("emac", product)]
-    assert discover_application_ready_products(tmp_path, 1985, 2014, model="emac") == [("emac", product)]
-    assert discover_application_ready_products(tmp_path, 1985, 2014, model="cmam") == []
-    assert discover_application_ready_products(tmp_path, 1990, 2014) == []
-
-
-def test_discovery_months_and_paths(tmp_path):
+def test_discover_harmonized_products(tmp_path):
     product = _product(tmp_path)
-    assert discover_application_products(tmp_path, 1985, 2014) == [("SOCOL", product)]
+    folder = tmp_path / "products/harmonized/SOCOL"
+    (folder / "jumacs_socol_1980-2009_5deg_1km.nc").write_bytes(b"x")
+    (folder / "notes.txt").write_text("x")
+    assert discover_harmonized_products(tmp_path, 1985, 2014) == [("SOCOL", product)]
+    assert discover_harmonized_products(tmp_path, 1985, 2014, model="SOCOL") == [("SOCOL", product)]
+    with pytest.raises(FileNotFoundError):
+        discover_harmonized_products(tmp_path, 1985, 2014, model="CMAM")
+    with pytest.raises(FileNotFoundError):
+        discover_harmonized_products(tmp_path, 1990, 2014)
+    with pytest.raises(FileNotFoundError):
+        discover_harmonized_products(tmp_path / "nothing", 1985, 2014)
+    assert HARMONIZED_NAME.fullmatch(product.name)["model"] == "socol"
+    assert HARMONIZED_NAME.fullmatch(f"{product.name}.bak") is None
+
+
+def test_section_paths_display_scales_and_sizes():
     assert ZONAL_MONTHS == (1, 4, 7, 10)
-    assert _plot_paths("SOCOL", "ta") == (Path("plots/SOCOL/ta_zonal.png"),
-                                          Path("plots/SOCOL/ta_annual.png"))
-
-
-def test_site_links_and_regeneration(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    product = _product(tmp_path)
-    first = build_site(1985, 2014, root=tmp_path)
-    site = first["site"]
-    assert first["models"] == ["SOCOL"]
-    assert first["variables"] == {"SOCOL": 1}
-    assert first["png_files"] == 2 and first["netcdf_files"] == 1
-    assert first["skipped"] == [("SOCOL", "surface_mean", "no geographical source for 2D field")]
-    assert (site / "products/application/SOCOL" / product.name).read_bytes() == product.read_bytes()
-    html = (site / "index.html").read_text()
-    assert "JuMACS climatology atlas" in html
-    assert "JuMACS application climatology atlas" not in html
-    assert "SOCOL" in html and "temperature" in html and "K" in html
-    assert '<select id="model">' in html and 'id="variables"' in html
-    assert 'data-view="zonal"' in html and 'data-view="annual"' in html
-    assert 'data-view="timeline"' in html
-    assert 'data-view="map"' in html
-    assert "single example year 2000" in html
-    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
-                                  html, re.DOTALL).group(1))
-    assert len(catalog) == 1
-    assert catalog[0]["model"] == "SOCOL" and catalog[0]["variable"] == "ta"
-    assert catalog[0]["canonical"] == "temperature"
-    for link in [catalog[0]["product"], *catalog[0]["views"].values()]:
-        assert not Path(link).is_absolute() and "://" not in link
-        assert (site / link).is_file()
-    for link in re.findall(r'(?:href|src)="([^"]+)"', html):
-        if link.startswith(("#", "mailto:")) or "://" in link:
-            continue
-        assert not Path(link).is_absolute() and "://" not in link
-        assert (site / link).is_file()
-    stale = site / "plots" / "OLD" / "stale.png"
-    stale.parent.mkdir()
-    stale.write_bytes(b"old")
-    _product(tmp_path, name="o3")
-    second = build_site(1985, 2014, root=tmp_path)
-    assert second["png_files"] == 2
-    assert not stale.exists()
-    assert not (site / "plots/SOCOL/ta_zonal.png").exists()
-    assert (site / "plots/SOCOL/o3_zonal.png").exists()
-
-
-def test_plot_notes_accompany_their_plot_views(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    _product(tmp_path)
-    site = build_site(1985, 2014, root=tmp_path)["site"]
-    html = (site / "index.html").read_text()
-    style = (site / "assets" / "style.css").read_text()
-    notes = dict(re.findall(r'<p class="plot-note" data-note="(\w+)"[^>]*>(.*?)</p>', html, re.DOTALL))
-    assert set(notes) == {"zonal", "timeline", "annual", "map"}
-    figure_end, section_end = html.index("</figure>"), html.index("</section></main>")
-    for match in re.finditer(r'<p class="plot-note"', html):
-        assert figure_end < match.start() < section_end
-    assert "January, April, July and October" in notes["zonal"]
-    assert "7 km scale height" in notes["zonal"]
-    for view in ("annual", "timeline"):
-        assert "1000, 100, 10 and 1 hPa" in notes[view]
-        assert "Missing values are not filled" in notes[view]
-    assert "longer source period" in notes["timeline"]
-    assert "single example year 2000" in notes["map"]
-    assert "January, April, July and October" in notes["map"]
-    assert 'class="note"' not in html
-    assert "Cross sections:" not in html and "Monthly time series:" not in html
-    assert "note.dataset.note !== view" in html
-    assert ".plot-note{" in style and ".note{" not in style
-
-
-def test_catalog_keeps_canonical_identity_across_different_native_names():
-    from jumacs.browser import _html
-
-    records = [(model, Path(f"{model}.nc"), [{"native": native, "canonical": "temperature",
-                                               "label": "temperature", "units": "K", "views": {}}])
-               for model, native in (("SOCOL", "ta"), ("WACCM-X", "T"))]
-    html = _html(records, 1985, 2014, [])
-    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
-                                   html, re.DOTALL).group(1))
-    assert [row["variable"] for row in catalog] == ["ta", "T"]
-    assert [row["canonical"] for row in catalog] == ["temperature", "temperature"]
-    assert [row["display"] for row in catalog] == ["Temperature", "Temperature"]
+    assert _section_path("SOCOL", "ta") == Path("plots/SOCOL/ta_section.png")
+    assert _section_path("SOCOL", "O3_strat") == Path("plots/SOCOL/O3_strat_section.png")
+    assert _display_scale(np.array([2e-6]), "mol mol-1") == (1e6, "ppmv")
+    assert _display_scale(np.array([2e-8]), "mol mol-1") == (1e9, "ppbv")
+    assert _display_scale(np.array([2e-10]), "mol mol-1") == (1e12, "pptv")
+    assert _display_scale(np.array([2e-13]), "mol mol-1") == (1e15, "ppqv")
+    assert _display_scale(np.array([250.0]), "K") == (1.0, "K")
+    assert _display_scale(np.array([100000.0]), "Pa") == (0.01, "hPa")
+    assert _display_scale(np.array([10000.0]), "m") == (0.001, "km")
+    assert _human_size(8) == "8 B"
+    assert _human_size(1500) == "1.5 kB"
+    assert _human_size(6_500_000) == "6.5 MB"
 
 
 def test_display_names_are_public_scientific_labels():
@@ -194,16 +103,107 @@ def test_display_names_are_public_scientific_labels():
         assert _display_name(formula) == formula
 
 
-def test_variable_selector_shows_display_names_without_native_aliases(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
-    _product(tmp_path)
-    site = build_site(1985, 2014, root=tmp_path)["site"]
+def test_site_links_and_regeneration(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    product = _product(tmp_path, fields={
+        "ta_mean": (("month", "altitude", "lat"), np.full((12, 3, 3), 230.0, "float32"),
+                    {"units": "K", "canonical_variable": "temperature", "source_variable": "ta"}),
+        "o3_mean": (("month", "altitude", "lat"), np.full((12, 3, 3), np.nan, "float32"),
+                    {"units": "mol mol-1", "canonical_variable": "O3", "source_variable": "o3"}),
+        "ps_mean": (("month", "lat"), np.ones((12, 3), "float32"), {"units": "Pa"}),
+    })
+    first = build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    site = first["site"]
+    assert first["models"] == ["SOCOL"]
+    assert first["variables"] == {"SOCOL": 1}
+    assert first["png_files"] == 1 and first["netcdf_files"] == 1
+    assert first["skipped"] == [("SOCOL", "o3_mean", "no finite values in displayed months"),
+                                ("SOCOL", "ps_mean", "not a 12-month month×altitude×lat field")]
+    assert (site / "products/harmonized/SOCOL" / product.name).read_bytes() == product.read_bytes()
     html = (site / "index.html").read_text()
-    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
-                                   html, re.DOTALL).group(1))
+    assert "JuMACS climatology atlas" in html
+    assert '<select id="model">' in html and 'id="variables"' in html
+    catalog = _json(html, "catalog")
+    assert len(catalog) == 1
+    assert catalog[0]["model"] == "SOCOL" and catalog[0]["variable"] == "ta"
+    assert catalog[0]["canonical"] == "temperature"
+    assert catalog[0]["display"] == "Temperature" and catalog[0]["units"] == "K"
+    assert catalog[0]["product"] == f"products/harmonized/SOCOL/{NAME}"
+    assert catalog[0]["views"] == {"section": "plots/SOCOL/ta_section.png"}
+    for link in re.findall(r'(?:href|src)="([^"]+)"', html):
+        if link.startswith(("#", "mailto:")) or "://" in link:
+            continue
+        assert not Path(link).is_absolute() and ".." not in link
+        assert (site / link).is_file(), link
+    assert "products/combined" not in html and "products/application" not in html
+    stale = site / "plots/OLD/stale.png"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"old")
+    product.unlink()
+    _product(tmp_path, fields={
+        "o3_mean": (("month", "altitude", "lat"), np.full((12, 3, 3), 2e-6, "float32"),
+                    {"units": "mol mol-1", "canonical_variable": "O3", "source_variable": "o3"})})
+    second = build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    assert second["png_files"] == 1
+    assert not stale.exists()
+    assert not (site / "plots/SOCOL/ta_section.png").exists()
+    assert (site / "plots/SOCOL/o3_section.png").exists()
+
+
+def test_non_climatological_product_is_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path, months=6)
+    report = build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    assert report["models"] == ["SOCOL"]
+    assert report["variables"] == {"SOCOL": 0}
+    assert report["skipped"] == [("SOCOL", NAME, "not a 12-month month×altitude×lat climatology")]
+
+
+def test_legacy_product_directories_are_removed(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    site = tmp_path / "site"
+    for name in ("products/application/SOCOL", "products/combined", "products/application-ready"):
+        legacy = site / name
+        legacy.mkdir(parents=True)
+        (legacy / "old.nc").write_bytes(b"old")
+    build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    for name in ("products/application", "products/combined", "products/application-ready"):
+        assert not (site / name).exists()
+
+
+def test_product_cards_describe_each_harmonized_product(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    html = (build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"] / "index.html").read_text()
+    text = " ".join(html.split())
+    assert html.count('<article class="product">') == 1
+    assert "The current public set contains 1 products for 1985–2014." in text
+    assert "<h3>SOCOL stratosphere</h3>" in html
+    assert "Harmonized climatology · 1985–2014" in html
+    assert "12 months · 5° latitude · 1 km altitude · valid top 60 km · NetCDF" in html
+    assert f'href="products/harmonized/SOCOL/{NAME}"' in html
+    assert f"<code>{NAME}</code>" in html
+    assert "no gap filling" in text
+    assert "docs/methodology.md" in html
+
+
+def test_catalog_keeps_canonical_identity_across_different_native_names():
+    records = [(model, Path(f"{model}.nc"), [{"native": native, "canonical": "temperature",
+                                              "label": "temperature", "units": "K", "views": {}}])
+               for model, native in (("SOCOL", "ta"), ("CESM2-WACCM", "T"))]
+    html = browser._html(records, 1985, 2014, [])
+    catalog = _json(html, "catalog")
+    assert [row["variable"] for row in catalog] == ["ta", "T"]
+    assert [row["canonical"] for row in catalog] == ["temperature", "temperature"]
+    assert [row["display"] for row in catalog] == ["Temperature", "Temperature"]
+
+
+def test_variable_selector_shows_display_names_without_native_aliases(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
+    _product(tmp_path)
+    html = (build_site(1985, 2014, model="SOCOL", root=tmp_path)["site"] / "index.html").read_text()
+    catalog = _json(html, "catalog")
     assert catalog[0]["display"] == "Temperature"
     assert catalog[0]["variable"] == "ta" and catalog[0]["canonical"] == "temperature"
     assert "button.textContent = row.display;" in html
@@ -212,474 +212,106 @@ def test_variable_selector_shows_display_names_without_native_aliases(tmp_path, 
     assert "row.model === model.value && row.canonical === canonical" in html
 
 
-def test_about_and_contact_view(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
+def test_about_contact_and_release_header(tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
     _product(tmp_path)
-    site = build_site(1985, 2014, root=tmp_path)["site"]
-    html = (site / "index.html").read_text()
-    style = (site / "assets" / "style.css").read_text()
+    result = build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    html = (result["site"] / "index.html").read_text()
+    style = (result["site"] / "assets" / "style.css").read_text()
+    text = " ".join(html.split())
     assert '<button id="about-nav">About &amp; contact</button>' in html
     assert '<section id="about-view" hidden>' in html
     assert "['about-nav', 'about-view']" in html
     assert "#about-view[hidden]{display:none}" in style
     assert "Jülich Multi-source Atmospheric Climatology and Statistics" in html
     assert "Climatology System" not in html
-    assert "JURASSIC and MPTRAC" in html
     assert "Dr. Lars Hoffmann" in html
     assert "Jülich Supercomputing Centre (JSC)" in html
-    assert "Forschungszentrum Jülich" in html
     assert 'href="mailto:l.hoffmann@fz-juelich.de"' in html
-    assert 'href="https://github.com/slcs-jsc/jumacs"' in html
-    assert "<address class=\"contact\">Dr. Lars Hoffmann" in html
-    assert '<h2>Project links</h2>' in html
     assert '<a href="https://datapub.fz-juelich.de/slcs/jumacs/">Published data</a>' in html
     assert '<a href="https://github.com/slcs-jsc/jumacs">Source code on GitHub</a>' in html
-    assert ">https://github.com/slcs-jsc/jumacs<" not in html
-    assert "Source code: <a" not in html
-
-
-def test_development_disclaimer_is_a_styled_paragraph(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
-    _product(tmp_path)
-    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
-    text = " ".join(html.split())
-    assert ('<p class="disclaimer">JuMACS is under active development. The public site provides the current '
-            "model-based climatologies, application products, diagnostic atlas, and source-data provenance. "
-            "Additional datasets, evaluation results, and functionality may be added in future releases.</p>") in text
-
-
-def test_v01_release_header_and_development_disclaimer(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
-    _product(tmp_path)
-    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
+    assert ('<p class="disclaimer">JuMACS is under active development. The public site provides the '
+            "current model-based climatologies, harmonized products, diagnostic atlas, and source-data "
+            "provenance. Additional datasets, evaluation results, and functionality may be added in "
+            "future releases.</p>") in text
     assert ("<p>JuMACS v0.1 · Initial public release · "
             "Harmonized multi-source model climatologies</p>") in html
-    assert "Model climatologies on the shared pressure grid" not in html
-    assert "JuMACS is under active development" in html
     assert "Feedback and scientific collaboration are very welcome." in html
-    assert "Jülich Multi-source Atmospheric Climatology and Statistics" in html
-    assert "Climatology System" not in html
-    assert "1985–2014" in html  # period stays documented outside the header line
+    assert "never merged, blended or bias corrected" in text
+    assert "1985–2014" in html
 
 
 def test_two_models_render_in_parallel_without_mixing_outputs(tmp_path):
-    _product(tmp_path, model="CMAM")
-    _product(tmp_path, model="SOCOL")
+    socol = _product(tmp_path)
+    cmam = _product(tmp_path, model="CMAM", slug="cmam")
     report = build_site(1985, 2014, root=tmp_path, workers=2)
     assert report["models"] == ["CMAM", "SOCOL"]
-    assert report["png_files"] == 4 and report["netcdf_files"] == 2
-    for model in report["models"]:
-        assert (report["site"] / f"plots/{model}/ta_zonal.png").stat().st_size > 1000
-        assert (report["site"] / f"plots/{model}/ta_annual.png").stat().st_size > 1000
-        assert (report["site"] / f"products/application/{model}/jumacs_{model.lower()}_application_climatology_1985-2014.nc").exists()
+    assert report["png_files"] == 2 and report["netcdf_files"] == 2
+    assert report["variables"] == {"CMAM": 1, "SOCOL": 1}
+    for model, path in (("CMAM", cmam), ("SOCOL", socol)):
+        published = report["site"] / f"products/harmonized/{model}/{path.name}"
+        assert published.is_file() and published.read_bytes() == path.read_bytes()
+        assert (report["site"] / f"plots/{model}/ta_section.png").stat().st_size > 1000
 
 
 def test_native_climatology_downloads_are_published(tmp_path, monkeypatch):
-    from jumacs import browser
-    from jumacs.climatology import product_name
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
+    monkeypatch.setattr(browser, "_plot_section", lambda *args: args[-1].write_bytes(b"PNG"))
     _product(tmp_path)
-    native = tmp_path / "products" / "climatology" / "SOCOL" / product_name("SOCOL", 1985, 2014)
+    native = tmp_path / "products/climatology/SOCOL" / product_name("SOCOL", 1985, 2014)
     native.parent.mkdir(parents=True)
-    xr.Dataset({"ta_mean": (("pressure", "lat"), np.ones((4, 3)), {"units": "K"})},
-               coords={"pressure": [10000., 1000., 100., 10.],
-                       "lat": [-62.5, 2.5, 57.5]}).to_netcdf(native)
-    report = build_site(1985, 2014, root=tmp_path)
-    published = report["site"] / native.relative_to(tmp_path)
+    xr.Dataset({"ta_mean": (("time", "plev", "lat"), np.ones((12, 2, 2)), {"units": "K"}),
+                "ps_mean": (("time", "lat"), np.ones((12, 2)), {"units": "Pa"})},
+               coords={"time": range(12), "plev": [10000., 1000.],
+                       "lat": [-45., 45.]}).to_netcdf(native)
+    report = build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    site = report["site"]
+    published = site / native.relative_to(tmp_path)
     assert report["climatology_files"] == 1
     assert published.is_file() and published.read_bytes() == native.read_bytes()
-    html = (report["site"] / "index.html").read_text()
-    inventory = json.loads(re.search(
-        r'<script id="inventory-data" type="application/json">(.*?)</script>', html, re.DOTALL).group(1))
-    assert any(row["native_product"] for row in inventory)
-    for row in inventory:
-        if row["native_product"]:
-            assert (report["site"] / row["native_product"]).is_file()
-
-
-def test_combined_products_are_published_and_linked(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
-    _product(tmp_path)
-    combined = tmp_path / "products" / "climatology" / "combined"
-    combined.mkdir(parents=True)
-    names = ("jumacs_emac_waccmx_1985-2014_5deg_1km.nc", "jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc")
-    for name in names:
-        (combined / name).write_bytes(b"combined")
-    report = build_site(1985, 2014, root=tmp_path)
-    assert sorted(report["combined_files"]) == list(names)
-    html = (report["site"] / "index.html").read_text()
-    assert "Combined climatology products" in html
-    for name in names:
-        published = report["site"] / "products" / "combined" / name
-        assert published.is_file() and published.read_bytes() == b"combined"
-        assert f'href="products/combined/{name}"' in html
-    assert '<article class="product">' in html
-    assert "EMAC-CCMI2" in html
-    assert "GEOSCCM" in html
-    assert "Combined with WACCM-X · 1985–2014" in html
-    assert "12 months · 5° latitude · 1 km altitude · NetCDF · 8 B" in html
-    assert "→ WACCM-X" not in html
-
-
-def test_products_page_explains_and_discovers_dynamically(tmp_path, monkeypatch):
-    from jumacs import browser
-    from jumacs.browser import HTML_TEMPLATE
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
-    _product(tmp_path)
-    combined = tmp_path / "products" / "climatology" / "combined"
-    combined.mkdir(parents=True)
-    slugs = ("ccsr-nies-miroc32", "cesm2-waccm", "cmam", "cnrm-mocage", "emac", "geosccm",
-             "ipsl-cm6a-atm-lr-reprobus", "socol")
-    for slug in slugs:
-        (combined / f"jumacs_{slug}_waccmx_1985-2014_5deg_1km.nc").write_bytes(b"x" * 6_500_000)
-    html = (build_site(1985, 2014, root=tmp_path)["site"] / "index.html").read_text()
-    assert html.count('<article class="product">') == 8
-    assert "The current public set contains 8 curated" in html
-    assert "one compact combined climatology product per active primary CCMI model" in html
-    assert "12 climatological months at 5° latitude resolution on a 1 km altitude grid" in html
-    assert "approximately 0–120 km" in html
-    assert "No bias correction or gap filling is applied" in html
-    assert "docs/methodology.md" in html
-    assert "intended for convenient" in html
-    for slug, label in (("ccsr-nies-miroc32", "CCSR-NIES-MIROC32"), ("cesm2-waccm", "CESM2-WACCM"),
-                        ("cmam", "CMAM"), ("cnrm-mocage", "CNRM-MOCAGE"), ("emac", "EMAC-CCMI2"),
-                        ("geosccm", "GEOSCCM"), ("ipsl-cm6a-atm-lr-reprobus", "IPSL-CM6A-ATM-LR-REPROBUS"),
-                        ("socol", "SOCOL")):
-        assert f"<h3>{label}</h3>" in html
-        assert f'href="products/combined/jumacs_{slug}_waccmx_1985-2014_5deg_1km.nc"' in html
-        assert "6.5 MB" in html
-    for slug in slugs:
-        assert slug.upper() not in HTML_TEMPLATE
-        assert slug not in HTML_TEMPLATE
-
-
-def test_combined_links_honor_product_url_base(monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setenv("JUMACS_PRODUCT_URL_BASE", "https://example.org/data/")
-    html = browser._html([], 1985, 2014, [], (), ["jumacs_emac_waccmx_1985-2014_5deg_1km.nc"])
-    assert 'href="https://example.org/data/jumacs_emac_waccmx_1985-2014_5deg_1km.nc"' in html
-
-
-def test_application_ready_products_are_published_and_linked(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    monkeypatch.setattr(browser, "_plot_ready_section", placeholder)
-    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
-    monkeypatch.delenv("JUMACS_READY_URL_BASE", raising=False)
-    _product(tmp_path)
-    combined = tmp_path / "products" / "climatology" / "combined"
-    combined.mkdir(parents=True)
-    base = "jumacs_emac_waccmx_1985-2014_5deg_1km.nc"
-    (combined / base).write_bytes(b"combined")
-    ready = _ready_product(tmp_path)
-    name = ready.name
-    report = build_site(1985, 2014, root=tmp_path)
-    site = report["site"]
-    assert report["ready_files"] == [name]
-    published = site / "products" / "application-ready" / name
-    assert published.is_file() and published.read_bytes() == ready.read_bytes()
-    assert (site / "plots-ready" / "EMAC" / "h2o_section.png").read_bytes() == b"PNG"
     html = (site / "index.html").read_text()
-    assert '<button id="ready-nav">Application-ready</button>' in html
-    assert "['ready-nav', 'ready-view']" in html
-    assert 'id="ready-view"' in html
-    assert "Application-ready products" in html
-    assert "raised-cosine" in html
-    assert "IG2 v3.1" in html
-    assert f'href="products/application-ready/{name}"' in html
-    assert f'href="products/combined/{base}"' in html
-    assert 'src="plots-ready/EMAC/h2o_section.png"' in html
-    assert "IG2 upper completion" in html and "edge-fill completion" in html
-    assert '<section class="ready-product">' in html
-    for link in re.findall(r'(?:href|src)="([^"]+)"', html):
-        if link.startswith(("#", "mailto:")) or "://" in link:
-            continue
-        assert not Path(link).is_absolute() and "://" not in link
-        assert (site / link).is_file()
+    catalog = _json(html, "catalog")
+    assert catalog[0]["native"] == f"products/climatology/SOCOL/{product_name('SOCOL', 1985, 2014)}"
+    rows = _json(html, "inventory-data")
+    ta = next(row for row in rows if row["canonical_variable"] == "temperature")
+    assert ta["native_product"] and (site / ta["native_product"]).is_file()
 
 
-def test_ready_view_is_wired_without_products(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
-    monkeypatch.delenv("JUMACS_READY_URL_BASE", raising=False)
-    _product(tmp_path)
-    result = build_site(1985, 2014, root=tmp_path)
-    assert result["ready_files"] == []
-    html = (result["site"] / "index.html").read_text()
-    assert '<button id="ready-nav">Application-ready</button>' in html
-    assert "['ready-nav', 'ready-view']" in html
-    assert 'id="ready-view"' in html
-    assert "No application-ready products are published" in html
-    assert "ready-plots" in (result["site"] / "assets" / "style.css").read_text()
-
-
-def test_ready_section_plot_uses_shared_range_and_altitude_axis(tmp_path):
-    from jumacs import browser
-
-    layouts = []
-    real_subplots = browser.plt.subplots
-
-    def subplots(nrows=1, ncols=1, *args, **kwargs):
-        layouts.append((nrows, ncols))
-        return real_subplots(nrows, ncols, *args, **kwargs)
-
-    monkey = browser.plt
-    monkey.subplots = subplots
-    try:
-        rng = np.random.default_rng(3)
-        values = 10 ** rng.random((12, 3, 3))
-        altitude = np.array([0.0, 60.0, 120.0])
-        latitudes = np.array([-45.0, 0.0, 45.0])
-        values[0, 0, 0] = np.nan
-        path = tmp_path / "section.png"
-        browser._plot_ready_section(values, altitude, latitudes, "EMAC", "Water vapour", "ppmv", path)
-    finally:
-        monkey.subplots = real_subplots
-    assert layouts == [(2, 2)]
+def test_plot_section_uses_shared_range_and_altitude_axis(tmp_path):
+    rng = np.random.default_rng(3)
+    values = 10 ** rng.random((12, 3, 3))
+    values[0, 0, 0] = np.nan
+    path = tmp_path / "section.png"
+    browser._plot_section(values, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
+                          "SOCOL", "Temperature", "K", path)
     assert path.is_file() and path.stat().st_size > 1000
+    flat = tmp_path / "flat.png"
+    browser._plot_section(np.full((12, 3, 3), 7.0), np.array([0.0, 30.0, 60.0]),
+                          np.array([-45.0, 0.0, 45.0]), "SOCOL", "Flat", "", flat)
+    assert flat.is_file() and flat.stat().st_size > 1000
 
 
+def test_plot_units_are_scaled_without_changing_products(tmp_path, monkeypatch):
+    captured = {}
 
-def test_monthly_timeline_uses_existing_zonal_series(tmp_path, monkeypatch):
-    from jumacs import browser
+    def fake(values, altitude, latitudes, model, label, units, path):
+        captured.update(values=values.copy(), units=units, label=label)
+        path.write_bytes(b"PNG")
 
-    def placeholder(*args, **kwargs):
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", placeholder)
-    monkeypatch.setattr(browser, "_plot_annual", placeholder)
-    _product(tmp_path)
-    zonal = tmp_path / "data/processed/SOCOL/refD1/ta_monthly_zonal.nc"
-    zonal.parent.mkdir(parents=True)
-    xr.Dataset({"ta": (("time", "plev", "lat"), np.ones((24, 2, 3)), {"units": "K"})},
-               coords={"time": np.arange("1985-01", "1987-01", dtype="datetime64[M]").astype("datetime64[ns]"),
-                       "plev": ("plev", [30000.0, 3000.0], {"units": "Pa"}),
-                       "lat": [-62.5, 2.5, 57.5]}).to_netcdf(zonal)
-    result = build_site(1985, 2014, root=tmp_path)
-    assert result["png_files"] == 3 and result["timeline_skipped"] == []
-    assert (result["site"] / "plots/SOCOL/ta_timeline.png").stat().st_size > 1000
-    html = (result["site"] / "index.html").read_text()
-    assert "plots/SOCOL/ta_timeline.png" in html
+    monkeypatch.setattr(browser, "_plot_section", fake)
+    _product(tmp_path, fields={
+        "o3_mean": (("month", "altitude", "lat"), np.full((12, 3, 3), 2e-8, "float32"),
+                    {"units": "mol mol-1", "canonical_variable": "O3", "source_variable": "o3"})})
+    build_site(1985, 2014, model="SOCOL", root=tmp_path)
+    np.testing.assert_allclose(captured["values"], 20.0)
+    assert captured["units"] == "ppbv" and captured["label"] == "O3"
 
 
-def test_exact_pressures_and_five_area_weighted_bands_keep_missing_barriers():
-    assert PLOT_PRESSURES_HPA == (1000.0, 100.0, 10.0, 1.0)
-    assert PLOT_LATITUDE_EDGES == (-90.0, -65.0, -20.0, 20.0, 65.0, 90.0)
-    pressure = np.array([100000.0, 20000.0, 5000.0, 2000.0, 500.0, 100.0])
-    latitude = np.array([-75.0, -50.0, -25.0, -15.0, 15.0, 25.0, 50.0, 75.0])
-    values = np.log(pressure[:, None]) + latitude[None, :] / 100.0
-    values[3] = np.nan
-    field = xr.DataArray(values[None], dims=("time", "plev", "lat"),
-                         coords={"time": [0], "plev": pressure, "lat": latitude})
-    samples = _band_samples(field, field.plev, latitude)
-    assert samples.shape == (5, 4, 1)
-    np.testing.assert_allclose(samples[2, [0, 1, 3], 0], np.log([100000.0, 10000.0, 100.0]))
-    assert np.isnan(samples[:, 2, 0]).all()
-
-
-def test_timeline_sampling_interpolates_hybrid_columns_before_band_mean():
-    latitudes = np.array([-45.0, 45.0])
-    field = xr.DataArray([[[0.0, 0.0], [1.0, 2.0], [2.0, 2.0]]],
-                         dims=("time", "lev", "lat"), coords={"time": [0], "lev": [0, 1, 2],
-                                                                   "lat": latitudes})
-    pressure = xr.DataArray([[[100000.0, 100000.0], [10000.0, 20000.0], [1000.0, 1000.0]]],
-                            dims=("time", "lev", "lat"), coords=field.coords)
-    samples = _band_samples(field, pressure, latitudes)
-    np.testing.assert_allclose(samples[2, 1, 0], 1.5)
-    assert np.isnan(samples[2, 3, 0])  # 1 hPa is above both native columns.
-
-
-def test_zonal_plot_has_working_approximate_height_scale(tmp_path):
-    pressure = np.geomspace(1000.0, 0.00002, 124)
-    height = _pressure_to_height([1000.0, 100.0, 10.0, 1.0])
-    np.testing.assert_allclose(height, [0.0, 7 * np.log(10), 14 * np.log(10), 21 * np.log(10)])
-    np.testing.assert_allclose(_height_to_pressure(height), [1000.0, 100.0, 10.0, 1.0])
-    path = tmp_path / "zonal.png"
-    _plot_zonal(np.ones((12, 124, 36)), pressure, np.arange(-87.5, 90.0, 5.0),
-                "SOCOL", "temperature", "K", path)
-    assert path.stat().st_size > 1000
-
-
-def test_plot_units_and_timeline_layout(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    assert _display_scale(np.array([2e-6]), "mol mol-1") == (1e6, "ppmv")
-    assert _display_scale(np.array([2e-8]), "mol mol-1") == (1e9, "ppbv")
-    assert _display_scale(np.array([2e-10]), "mol mol-1") == (1e12, "pptv")
-    assert _display_scale(np.array([250.0]), "K") == (1.0, "K")
-
-    product = _product(tmp_path, name="o3")
-    with xr.open_dataset(product) as ds:
-        changed = ds.load()
-    changed["o3_mean"][:] = 2e-8
-    changed["o3_mean"].attrs["units"] = "mol mol-1"
-    changed.to_netcdf(product)
-    plots = {}
-
-    def zonal(values, *args):
-        plots["zonal"] = (values.copy(), args[-2])
-        args[-1].write_bytes(b"PNG")
-
-    def annual(field, *args, scale):
-        plots["annual"] = (field.attrs["units"], args[-2], scale)
-        args[-1].write_bytes(b"PNG")
-
-    monkeypatch.setattr(browser, "_plot_zonal", zonal)
-    monkeypatch.setattr(browser, "_plot_annual", annual)
-    build_site(1985, 2014, root=tmp_path)
-    np.testing.assert_allclose(plots["zonal"][0], 20.0)
-    assert plots["zonal"][1] == "ppbv"
-    assert plots["annual"] == ("mol mol-1", "ppbv", 1e9)
-
-    original = browser.plt.subplots
-    layouts = []
-
-    def subplots(*args, **kwargs):
-        layouts.append(args[:2])
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(browser.plt, "subplots", subplots)
-    samples = np.ones((5, 4, 12))
-    browser._plot_band_series(samples, np.arange(12), "SOCOL", "ozone", "ppbv",
-                              "monthly zonal means", "Year", tmp_path / "timeline.png", timeline=True)
-    assert layouts == [(4, 1)]
-
-
-def test_geographical_maps_use_single_source_year_and_native_pressure(tmp_path):
-    folder = tmp_path / "data/raw/SOCOL/refD1/Amon/ta"
-    folder.mkdir(parents=True)
-    source = folder / "ta_Amon_SOCOL_refD1_gn_r1i1p1f1_199901-200112.nc"
-    time = np.arange("1999-01", "2002-01", dtype="datetime64[M]").astype("datetime64[ns]")
-    values = np.full((36, 2, 3, 4), 200.0)
-    values[:, 1] = 220.0
-    xr.Dataset({"ta": (("time", "lev", "lat", "lon"), values, {"units": "K"}),
-                "ps": (("time", "lat", "lon"), np.full((36, 3, 4), 100000.0), {"units": "Pa"}),
-                "a": ("lev", [1.0, 0.1]), "b": ("lev", [0.0, 0.0]),
-                "p0": ((), 100000.0, {"units": "Pa"})},
-               coords={"time": time, "lev": ("lev", [0, 1], {"units": "1"}),
-                       "lat": [-60.0, 0.0, 60.0], "lon": [0.0, 90.0, 180.0, 270.0]}).to_netcdf(source)
-    from jumacs.config import load_config
-
-    assert _reference_year_source(tmp_path, load_config("SOCOL"), "ta", 2000) == source
-    maps, lat, lon, levels, units = _map_values(source, "SOCOL", "ta", 2000)
-    assert maps.shape == (4, 4, 3, 4)
-    assert levels == PLOT_PRESSURES_HPA and units == "K"
-    np.testing.assert_allclose(maps[:, 0], 200.0)
-    np.testing.assert_allclose(maps[:, 1], 220.0)
-    assert np.isnan(maps[:, 2:]).all()  # No extrapolation above the native model top.
-    np.testing.assert_array_equal(lon, [-180.0, -90.0, 0.0, 90.0])
-    path = tmp_path / "map.png"
-    assert _plot_map(maps, lat, lon, levels, "SOCOL", "temperature", units, 2000, path)
-    assert path.stat().st_size > 1000
-
-    surface = source.with_name("ps_Amon_SOCOL_refD1_gn_r1i1p1f1_199901-200112.nc")
-    surface.write_bytes(source.read_bytes())
-    maps, _, _, levels, units = _map_values(surface, "SOCOL", "ps", 2000)
-    assert maps.shape == (4, 1, 3, 4) and levels is None and units == "Pa"
-    np.testing.assert_allclose(maps, 100000.0)
-
-
-def test_geographical_maps_use_separate_published_pressure(tmp_path):
-    folder = tmp_path / "data/raw/CMAM/refD1/Amon"
-    time = np.arange("2000-01", "2001-01", dtype="datetime64[M]").astype("datetime64[ns]")
-    coords = {"time": time, "lat": [-45.0, 45.0], "lon": [0.0, 180.0]}
-    name = "ta_Amon_CMAM_refD1_r1i1p1f1_gn_200001-200012.nc"
-    source = folder / "ta" / name
-    source.parent.mkdir(parents=True)
-    xr.Dataset({"ta": (("time", "lev", "lat", "lon"),
-                       np.broadcast_to(np.array([210.0, 230.0])[None, :, None, None],
-                                       (12, 2, 2, 2)).copy(), {"units": "K"})},
-               coords={**coords, "lev": [0, 1]}).to_netcdf(source)
-    pressure = folder / "pa" / name.replace("ta_", "pa_", 1)
-    pressure.parent.mkdir(parents=True)
-    xr.Dataset({"pa": (("time", "lev", "lat", "lon"),
-                       np.broadcast_to(np.array([100000.0, 10000.0])[None, :, None, None],
-                                       (12, 2, 2, 2)), {"units": "Pa"})},
-               coords={**coords, "lev": [0, 1]}).to_netcdf(pressure)
-    maps, _, _, levels, _ = _map_values(source, "CMAM", "ta", 2000)
-    assert levels == PLOT_PRESSURES_HPA
-    np.testing.assert_allclose(maps[:, 0], 210.0)
-    np.testing.assert_allclose(maps[:, 1], 230.0)
-    assert np.isnan(maps[:, 2:]).all()
-
-
-def test_surface_pressure_appears_as_map_only_view(tmp_path, monkeypatch):
-    from jumacs import browser
-
-    product = _product(tmp_path)
-    with xr.open_dataset(product) as ds:
-        changed = ds.load()
-    changed["ps_mean"] = (("time", "lat"), np.full((12, 3), 100000.0), {"units": "Pa"})
-    changed.to_netcdf(product)
-    folder = tmp_path / "data/raw/SOCOL/refD1/Amon/ps"
-    folder.mkdir(parents=True)
-    source = folder / "ps_Amon_SOCOL_refD1_gn_r1i1p1f1_200001-200012.nc"
-    time = np.arange("2000-01", "2001-01", dtype="datetime64[M]").astype("datetime64[ns]")
-    xr.Dataset({"ps": (("time", "lat", "lon"), np.full((12, 3, 4), 100000.0),
-                       {"units": "Pa"})},
-               coords={"time": time, "lat": [-60.0, 0.0, 60.0],
-                       "lon": [0.0, 90.0, 180.0, 270.0]}).to_netcdf(source)
-
-    monkeypatch.setattr(browser, "_plot_zonal", lambda *args: args[-1].write_bytes(b"PNG"))
-    monkeypatch.setattr(browser, "_plot_annual", lambda *args, **kwargs: args[-1].write_bytes(b"PNG"))
-
-    def map_plot(*args):
-        args[-1].write_bytes(b"PNG")
-        return True
-
-    monkeypatch.setattr(browser, "_plot_map", map_plot)
-    site = build_site(1985, 2014, root=tmp_path)["site"]
-    html = (site / "index.html").read_text()
-    catalog = json.loads(re.search(r'<script id="catalog" type="application/json">(.*?)</script>',
-                                  html, re.DOTALL).group(1))
-    surface = next(row for row in catalog if row["variable"] == "ps")
-    assert surface["views"] == {"map": "plots/SOCOL/ps_map.png"}
-    assert (site / surface["views"]["map"]).is_file()
-    inventory = json.loads(re.search(r'<script id="inventory-data" type="application/json">(.*?)</script>',
-                                     html, re.DOTALL).group(1))
-    pressure = next(row for row in inventory if row["native_variable"] == "ps")
-    assert pressure["map_plot"] == surface["views"]["map"]
-    assert not Path(pressure["map_plot"]).is_absolute()
+def test_build_site_requires_at_least_one_worker(tmp_path):
+    with pytest.raises(ValueError, match="workers"):
+        build_site(1985, 2014, root=tmp_path, workers=0)
 
 
 def test_browse_cli(monkeypatch, capsys):
-    from jumacs import browser
-
     calls = []
 
     def build(start, end, *, model, workers):

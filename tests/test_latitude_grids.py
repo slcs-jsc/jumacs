@@ -4,7 +4,8 @@ import pytest
 import xarray as xr
 
 import jumacs.climatology as climatology_module
-from jumacs import cf, inventory, remap
+from jumacs import cf, inventory
+from jumacs.harmonize import _harmonize_open_dataset, _isa_height_m
 from jumacs.climatology import (
     LATITUDE_SNAP_TOLERANCE_DEGREES,
     assemble_product,
@@ -126,30 +127,48 @@ def test_a_latitude_axis_beyond_tolerance_below_the_snapping_level_is_refused():
         assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, [part("o3", LAT, 1.0), part("epfy", beyond, 2.0)])
 
 
-def test_remap_places_every_grid_on_the_canonical_application_bands(tmp_path, monkeypatch):
-    monkeypatch.setattr(climatology_module, "ROOT", tmp_path)
-    product = assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
+def height_part(lat):
+    """A geopotential profile on the model's own native levels, in m2 s-2."""
+    profile = 9.80665 * _isa_height_m(NATIVE)
+    stats = xr.Dataset(
+        {statistic: (("month", "plev", "lat"),
+                     np.broadcast_to(profile[None, :, None], (12, NATIVE.size, lat.size)).copy())
+         for statistic in cf.STATISTIC_ORDER},
+        coords={"month": list(range(1, 13)), "plev": ("plev", NATIVE, {"units": "Pa"}), "lat": ("lat", lat)})
+    return variable_statistics("zg", stats, {"units": "m2 s-2"}, {})
+
+
+def harmonized_grids_dataset():
+    model = "IPSL-CM6A-ATM-LR-REPROBUS"
+    grids = {}
+    parts = [assign_latitude_grid(part(name, lat, value), grids, model, name)
+             for name, lat, value in (("o3", LAT, 1.0), ("epfy", LAT2, 2.0))]
+    parts.append(assign_latitude_grid(height_part(LAT), grids, model, "zg"))
+    product = assemble_product(model, 2000, 2001, parts)
+    prepared = _harmonize_open_dataset(product, model, load_config(model), 2000, 2001, 5, 1)
+    return product, prepared["dataset"]
+
+
+def test_harmonize_grids_native_latitude_fields_on_the_canonical_bands():
+    product, harmonized = harmonized_grids_dataset()
     assert product.o3_mean.attrs["latitude_axis"] == "lat"
     assert product.epfy_mean.attrs["latitude_axis"] == "lat_2"
     assert product.attrs["latitude_counts"] == f"lat={LAT.size}; lat_2={LAT2.size}"
-    remapped = remap.remap_product(product)
-    assert "lat_2" not in remapped.dims and "lat_2" not in remapped.coords
-    for name, value in (("o3", 1.0), ("epfy", 2.0)):
-        field = remapped[f"{name}_mean"]
-        assert field.dims == ("time", "pressure", "lat")
-        assert "latitude_axis" not in field.attrs
-        finite = np.isfinite(field.values)
-        assert finite.any()
-        np.testing.assert_allclose(field.values[finite], value)
-    assert remapped.sizes["lat"] == 36
-    assert remapped.attrs["native_latitude_counts"] == product.attrs["latitude_counts"]
-    assert cf.validate_product(remapped, names=("o3", "epfy"), kind="application") == []
+    assert "lat_2" not in harmonized.dims
+    # A field carried only on a second latitude grid has no band weights and stays out of the product.
+    assert "epfy_mean" not in harmonized.data_vars
+    field = harmonized["o3_mean"]
+    assert field.dims == ("month", "altitude", "lat")
+    assert harmonized.sizes["lat"] == 36
+    np.testing.assert_allclose(field.values[np.isfinite(field.values)], 1.0)
+    assert float(harmonized.altitude[0]) == 0.0
+    assert float(harmonized.altitude[-1]) == float(np.floor(_isa_height_m(NATIVE).max() / 1000.0))
+    assert cf.validate_product(harmonized, names=("o3",), kind="harmonized") == []
 
 
-def test_the_application_contract_still_refuses_a_latitude_axis_named_lat_2():
-    product = assemble_product("IPSL-CM6A-ATM-LR-REPROBUS", 2000, 2001, gridded_parts([("o3", LAT, 1.0), ("epfy", LAT2, 2.0)]))
-    remapped = remap.remap_product(product).rename({"lat": "lat_2"})
-    assert cf.validate_product(remapped, names=("o3", "epfy"), kind="application") != []
+def test_the_harmonized_contract_still_refuses_a_latitude_axis_named_lat_2():
+    _, harmonized = harmonized_grids_dataset()
+    assert cf.validate_product(harmonized.rename({"lat": "lat_2"}), names=("o3",), kind="harmonized") != []
 
 
 def test_the_inventory_recognizes_fields_on_a_second_latitude_grid(tmp_path):

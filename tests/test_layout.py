@@ -1,6 +1,4 @@
 """Path and site checks that need no archive access."""
-import importlib.util
-import json
 import os
 import shutil
 import subprocess
@@ -23,23 +21,6 @@ def test_repository_relative_paths():
             value = cfg["paths"][key]
             assert not Path(value).is_absolute() and value.startswith(prefix)
         assert manifest_path(model).parent == ROOT / "products/manifests"
-
-
-def test_site_build_has_only_relative_default_links(tmp_path, monkeypatch):
-    path = ROOT / "scripts/build_index.py"
-    spec = importlib.util.spec_from_file_location("site_builder", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setattr(module, "ROOT", tmp_path)
-    monkeypatch.delenv("JUMACS_PRODUCT_URL_BASE", raising=False)
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "site").mkdir()
-    (tmp_path / "site/catalog.json").write_text(json.dumps([{"model": "GEOSCCM", "views": {"timeline": "plots/o3.png"}}]))
-    (tmp_path / "scripts/index_template.html").write_text('<a href="plots/o3.png">plot</a> __JUMACS_CATALOG__ __JUMACS_DATA_LINKS__')
-    text = module.build_index().read_text()
-    assert 'href="plots/o3.png"' in text
-    assert "compact/jumacs_" not in text
-    assert 'href="products/combined/jumacs_geosccm_waccmx_1985-2014_5deg_1km.nc"' in text
 
 
 def test_mirror_rejects_unset_destination():
@@ -73,9 +54,9 @@ def test_local_mirror_copies_self_contained_hpc_site(tmp_path):
     (checkout / ".git").mkdir()
     shutil.copy2(ROOT / "scripts/mirror.sh", checkout / "scripts/mirror.sh")
     hpc = tmp_path / "hpc/site"
-    (hpc / "products/application/SOCOL").mkdir(parents=True)
+    (hpc / "products/harmonized/SOCOL").mkdir(parents=True)
     (hpc / "index.html").write_text("site")
-    (hpc / "products/application/SOCOL/jumacs_socol_application_climatology_1985-2014.nc").write_bytes(b"synthetic")
+    (hpc / "products/harmonized/SOCOL/jumacs_socol_1985-2014_5deg_1km.nc").write_bytes(b"synthetic")
     env = os.environ.copy()
     log = _fake_rsync(tmp_path, env)
     env["JUMACS_HPC_MIRROR"] = str(hpc)
@@ -156,9 +137,9 @@ def test_web_mirror_uses_complete_local_site(tmp_path):
     env["JUMACS_WEB_SITE_MIRROR"] = "datapub.fz-juelich.de:/var/www/jumacs/"
     missing = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web"],
                              env=env, capture_output=True, text=True, check=False)
-    assert missing.returncode == 2 and "generated application site" in missing.stderr
-    (site / "products/application/SOCOL").mkdir(parents=True)
-    (site / "products/application/SOCOL/application.nc").write_bytes(b"synthetic")
+    assert missing.returncode == 2 and "generated site" in missing.stderr
+    (site / "products/harmonized/SOCOL").mkdir(parents=True)
+    (site / "products/harmonized/SOCOL/harmonized.nc").write_bytes(b"synthetic")
     result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web"],
                             env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr

@@ -10,14 +10,12 @@ from .archive import (
     variable_matrix,
 )
 from .climatology import build_climatology
-from .compact import build_compact
 from .comparison import _pressure, compare_period
 from .config import (
     is_waccmx,
     load_config,
     model_names,
     model_period,
-    models_with_capability,
     ready_ccmi_model_names,
     reference_period,
 )
@@ -35,24 +33,25 @@ def _model_type(name):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="jumacs", description="Normal workflow: inspect, download, build, application, quicklook. Other commands are advanced developer tools.", epilog="jumacs build --model CMAM --start-year 1985 --end-year 2014 builds every variable configured in config/models/CMAM.yaml")
+    parser = argparse.ArgumentParser(prog="jumacs", description="Normal workflow: inspect, download, build, harmonize, quicklook. Other commands are advanced developer tools.", epilog="jumacs build --model CMAM --start-year 1985 --end-year 2014 builds every variable configured in config/models/CMAM.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build", help="Build one model's monthly zonal series and verified native climatology (variables come from config/models/<MODEL>.yaml)")
     build.add_argument("--model", required=True, help="Model name, comma-separated names, or all (every ready model with zonal processing)")
     build.add_argument("--start-year", type=int)
     build.add_argument("--end-year", type=int)
     build.add_argument("--variable", action="append", help="Advanced: restrict to selected variables instead of everything configured")
-    application = sub.add_parser("application", help="Write one CCMI application-grid climatology extended with WACCM-X")
-    application.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"), required=True)
-    application.add_argument("--start-year", type=int)
-    application.add_argument("--end-year", type=int)
-    application.add_argument("--no-extension", action="store_true", help="Write the remapped CCMI product without WACCM-X")
-    browse = sub.add_parser("browse", help="Build a static website from existing application products")
+    harmonize = sub.add_parser("harmonize", help="Remap each model's native climatology onto its validated altitude extent and 5 degree latitude bands (one file per model)")
+    harmonize.add_argument("--model", default="all", help="Model name, comma-separated names, or all (every ready CCMI model plus WACCM-X)")
+    harmonize.add_argument("--start-year", type=int)
+    harmonize.add_argument("--end-year", type=int)
+    harmonize.add_argument("--latitude-step", type=int, default=5)
+    harmonize.add_argument("--altitude-step", type=int, default=1)
+    browse = sub.add_parser("browse", help="Build a static website from existing harmonized products")
     browse.add_argument("--start-year", type=int)
     browse.add_argument("--end-year", type=int)
-    browse.add_argument("--model", choices=tuple(name for name in model_names() if name != "WACCM-X"))
+    browse.add_argument("--model", choices=model_names())
     browse.add_argument("--workers", type=int, default=4, help="Parallel model plot workers (default: 4)")
-    inventory = sub.add_parser("inventory", help="Summarize existing native and application climatology products")
+    inventory = sub.add_parser("inventory", help="Summarize existing native and harmonized climatology products")
     inventory.add_argument("--start-year", type=int)
     inventory.add_argument("--end-year", type=int)
     inventory.add_argument("--model", choices=model_names())
@@ -88,26 +87,6 @@ def main(argv=None):
     evaluation.add_argument("--start-year", type=int)
     evaluation.add_argument("--end-year", type=int)
     evaluation.add_argument("--pressure-hpa", nargs="+", type=float, default=[1000, 500, 100, 50, 10, 1])
-    compact = sub.add_parser("compact", help="Build a compact CCMI to WACCM-X height-grid product")
-    compact.add_argument("--model", choices=(*models_with_capability("compact_waccmx"), "all"), required=True)
-    compact.add_argument("--start-year", type=int)
-    compact.add_argument("--end-year", type=int)
-    compact.add_argument("--latitude-step", type=int, default=5)
-    compact.add_argument("--altitude-step", type=int, default=1)
-    compact.add_argument("--transition-start", type=float, default=55)
-    compact.add_argument("--transition-end", type=float, default=65)
-    compact.add_argument("--variable", action="append")
-    ready = sub.add_parser("application-ready", help="Complete the compact EMAC/WACCM-X product with IG2 v3.1 upper-tail fill and constant edge fill")
-    ready.add_argument("--model", choices=(*models_with_capability("compact_waccmx"), "all"), required=True)
-    ready.add_argument("--start-year", type=int)
-    ready.add_argument("--end-year", type=int)
-    ready.add_argument("--latitude-step", type=int, default=5)
-    ready.add_argument("--altitude-step", type=int, default=1)
-    ready.add_argument("--transition-width", type=float, default=8.0, help="IG2 seam blend width in km (default: 8)")
-    ready.add_argument("--combined", help="Path to the compact combined product (default: products/climatology/combined)")
-    ready.add_argument("--ig2-dir", help="Path to the IG2 v3.1 archive directory (default: data/raw/IG2/v3.1)")
-    ready.add_argument("--output", help="Path to the output product (default: products/application-ready)")
-    ready.add_argument("--plots-dir", help="Optional directory for validation plots")
     sub.add_parser("summary", help="Rebuild model/species summary tables and summary.md from local inventories (offline)")
     sub.add_parser("provenance", help="Write the source data provenance catalog for every ready dataset (offline; writes products/catalog/data_provenance.csv and .json)")
     sub.add_parser("download-audit", help="Rebuild complete-archive download plans for every available source and write the mirror-plan audit (offline, no transfer)")
@@ -121,27 +100,6 @@ def main(argv=None):
     smoke = sub.add_parser("zonal-smoke", help="Process one time slice of one real raw file to validate a model's coordinate mapping end-to-end (writes only products/diagnostics/zonal_smoke)")
     smoke.add_argument("--model", choices=model_names(), required=True)
     smoke.add_argument("--variable", default="temperature")
-    coverage_matrix_command = sub.add_parser(
-        "coverage-matrix",
-        help="Per-model WACCM-X extension readiness from existing climatology products: where each CCMI model is usable, where WACCM-X is usable, and where the two overlap (reads products only, writes products/comparison/coverage_matrix.csv, .md, .json)",
-    )
-    coverage_matrix_command.add_argument(
-        "--model",
-        default="all",
-        help="Model names or slugs, comma-separated; all (every model with a product in the period); or auto (ready CCMI models with a product). WACCM-X is the reference and is needed in every selection. Default: all",
-    )
-    coverage_matrix_command.add_argument("--start-year", type=int, help="Product period start year (default: the configured reference period)")
-    coverage_matrix_command.add_argument("--end-year", type=int, help="Product period end year (default: the configured reference period)")
-    coverage_matrix_command.add_argument(
-        "--usable-level-fraction",
-        type=float,
-        help="Fraction of pressure levels a field must be usable on to be labelled broadly usable; a descriptive label only, not a condition for overlap or extension (default: the configured coverage.usable_level_fraction)",
-    )
-    coverage_matrix_command.add_argument(
-        "--usable-sample-fraction",
-        type=float,
-        help="Minimum fraction of the months and latitudes of a pressure level that must be finite for that level to count (default: the configured coverage.usable_sample_fraction)",
-    )
     args = parser.parse_args(argv)
     if args.command == "inventory":
         from .inventory import build_inventory
@@ -159,16 +117,18 @@ def main(argv=None):
         print(json.dumps({key: str(value) if key == "site" else value
                           for key, value in report.items()}, indent=2))
         return
-    if args.command == "application":
-        from .application import build_application_product
-        print(build_application_product(args.model, args.start_year, args.end_year,
-                                        extend=not args.no_extension))
-        return
-    if args.command == "coverage-matrix":
-        from .coverage import coverage_matrix_command as run_coverage_matrix
-
-        print(run_coverage_matrix(args.model, args.usable_level_fraction, args.usable_sample_fraction,
-                                  args.start_year, args.end_year))
+    if args.command == "harmonize":
+        from .build import model_list
+        from .harmonize import harmonize_all, harmonize_model
+        if args.model == "all":
+            results = harmonize_all(start_year=args.start_year, end_year=args.end_year,
+                                    latitude_step=args.latitude_step, altitude_step=args.altitude_step)
+        else:
+            results = [harmonize_model(model, args.start_year, args.end_year,
+                                       args.latitude_step, args.altitude_step)
+                       for model in model_list(args.model)]
+        for path, report in results:
+            print(json.dumps({"product": str(path), **report}, indent=2))
         return
     if args.command == "build":
         from .build import build_models
@@ -215,31 +175,6 @@ def main(argv=None):
             print(path)
         return
     reference = reference_period()["reference_period"]
-    if args.command == "compact":
-        models = models_with_capability("compact_waccmx") if args.model == "all" else (args.model,)
-        start = args.start_year or reference["start_year"]
-        end = args.end_year or reference["end_year"]
-        for model in models:
-            print(build_compact(model, start, end,
-                                args.latitude_step, args.altitude_step,
-                                args.transition_start, args.transition_end,
-                                args.variable))
-        return
-    if args.command == "application-ready":
-        from .application_ready import build_application_ready
-        models = models_with_capability("compact_waccmx") if args.model == "all" else (args.model,)
-        start = args.start_year or reference["start_year"]
-        end = args.end_year or reference["end_year"]
-        for model in models:
-            report = build_application_ready(model, start, end,
-                                             args.latitude_step, args.altitude_step,
-                                             combined_path=args.combined, ig2_dir=args.ig2_dir,
-                                             output_path=args.output,
-                                             transition_width_km=args.transition_width,
-                                             plots_dir=args.plots_dir)
-            print(json.dumps({key: report[key] for key in
-                              ("product", "totals", "variables_flagged_for_hard_seam")}, indent=2))
-        return
     if args.command == "compare":
         if args.models[0] == args.models[1]:
             parser.error("select two distinct models")

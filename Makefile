@@ -5,7 +5,7 @@ START ?=
 END ?=
 PERIOD = $(if $(START),--start-year $(START)) $(if $(END),--end-year $(END))
 
-.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute build zonal climatology compact compare validate coverage trends quicklook site mirror-local mirror-web
+.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute build zonal climatology harmonize compare validate coverage trends quicklook site mirror-local mirror-web
 
 test:
 	@PYTHONPATH="src:$(PYTHONPATH)" $(PYTHON) -m pytest -q
@@ -30,8 +30,8 @@ zonal:
 	@$(CLI) zonal --model $(MODEL)
 climatology:
 	@$(CLI) climatology --model $(MODEL) $(PERIOD)
-compact:
-	@$(CLI) compact --model $(MODEL) $(PERIOD)
+harmonize:
+	@$(CLI) harmonize --model $(MODEL) $(PERIOD)
 compare:
 	@$(CLI) compare --models GEOSCCM EMAC $(PERIOD)
 validate:
@@ -43,7 +43,7 @@ trends:
 quicklook:
 	@$(CLI) quicklook --model $(MODEL) $(PERIOD)
 site:
-	@$(PYTHON) scripts/build_index.py
+	@$(CLI) browse $(PERIOD)
 mirror-local:
 	@bash scripts/mirror.sh local
 mirror-web:
