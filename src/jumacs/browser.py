@@ -108,6 +108,7 @@ def _display_scale(values, units):
 
 
 LINEAR_SCALE_VARIABLES = frozenset({
+    "O3", "O3_strat",
     "N2O", "CH4", "CO2", "CFC-11", "CFC-12", "CCl4", "CH3CCl3",
     "HCFC-22", "HCFC-141b", "HCFC-142b", "CH3Cl", "CH3Br",
     "CH2Br2", "CH2BrCl", "CHBr2Cl", "CHBr3", "CHBrCl2",
@@ -120,7 +121,7 @@ LINEAR_SCALE_VARIABLES = frozenset({
 })
 
 LOG_SCALE_VARIABLES = frozenset({
-    "O", "N", "O3", "O3_strat",
+    "O", "N",
     "OH", "HO2", "HOCl", "HOBr",
     "ClO", "Cl2O2", "OClO", "BrO", "BrCl", "Br",
     "NO", "NO2",

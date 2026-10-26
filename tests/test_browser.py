@@ -125,12 +125,26 @@ def test_display_names_are_public_scientific_labels():
         assert _display_name(formula) == formula
 
 
+@pytest.mark.parametrize("canonical,scale", [
+    ("O3", "linear"),
+    ("O3_strat", "linear"),
+    ("N2O", "linear"),
+    ("CFC-11", "linear"),
+    ("temperature", "linear"),
+    ("ClO", "log"),
+    ("OH", "log"),
+    ("a_species_nobody_modelled_yet", "linear"),
+])
+def test_color_scale_policy_table(canonical, scale):
+    assert _color_scale(canonical) == scale
+
+
 def test_color_scale_is_fixed_per_canonical_variable():
-    for name in ("N2O", "CH4", "CO2", "CFC-11", "CFC-12", "CCl4", "CH3CCl3", "HCFC-22",
+    for name in ("O3", "O3_strat", "N2O", "CH4", "CO2", "CFC-11", "CFC-12", "CCl4", "CH3CCl3", "HCFC-22",
                  "CH3Cl", "CH3Br", "Halon-1301", "H2O", "CO",
                  "temperature", "zonal_wind", "meridional_wind", "mean_age"):
         assert _color_scale(name) == "linear"
-    for name in ("O3", "O3_strat", "ClO", "BrO", "OH", "NO", "NO2", "O"):
+    for name in ("ClO", "BrO", "OH", "HO2", "Cl2O2", "OClO", "BrCl", "Br", "NO", "NO2", "O", "N"):
         assert _color_scale(name) == "log"
     assert _color_scale("a_species_nobody_modelled_yet") == "linear"
     assert _color_scale("") == "linear"
@@ -141,6 +155,7 @@ def test_scale_choice_does_not_follow_model_dynamic_range(tmp_path):
     import matplotlib
     huge = np.logspace(-12, -6, 12 * 3 * 3).reshape(12, 3, 3)
     tiny = np.linspace(1.0e-8, 1.1e-8, 12 * 3 * 3).reshape(12, 3, 3)
+    wide = np.logspace(-12, -5, 12 * 3 * 3).reshape(12, 3, 3)
     used = []
     real_lognorm = matplotlib.colors.LogNorm
 
@@ -153,7 +168,9 @@ def test_scale_choice_does_not_follow_model_dynamic_range(tmp_path):
         browser._plot_section(huge, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
                               "A", "N2O", "ppmv", tmp_path / "n2o_huge.png", canonical="N2O")
         browser._plot_section(tiny, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
-                              "B", "O3", "ppbv", tmp_path / "o3_tiny.png", canonical="O3")
+                              "B", "ClO", "pptv", tmp_path / "clo_tiny.png", canonical="ClO")
+        browser._plot_section(wide, np.array([0.0, 30.0, 60.0]), np.array([-45.0, 0.0, 45.0]),
+                              "C", "O3", "ppmv", tmp_path / "o3_wide.png", canonical="O3")
     finally:
         matplotlib.colors.LogNorm = real_lognorm
     assert used == ["log"]

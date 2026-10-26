@@ -3,13 +3,21 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mode="${1:-}"
+dry_run=false
+if [[ $# -gt 2 || ( $# -eq 2 && "$2" != --dry-run ) ]]; then
+  echo "Usage: scripts/mirror.sh {local|web} [--dry-run]" >&2
+  exit 2
+fi
+if [[ "${2:-}" == --dry-run ]]; then
+  dry_run=true
+fi
 case "$mode" in
   local)
     source="${JUMACS_HPC_MIRROR:-judac.fz-juelich.de:/p/data1/slmet/model_data/jumacs/site}"
     destination="$root/site"
     ;;
   web) source="$root/site"; destination="${JUMACS_WEB_SITE_MIRROR:-}" ;;
-  *) echo "Usage: scripts/mirror.sh {local|web}" >&2; exit 2 ;;
+  *) echo "Usage: scripts/mirror.sh {local|web} [--dry-run]" >&2; exit 2 ;;
 esac
 
 if [[ "$mode" != local && -z "$destination" ]]; then
@@ -44,7 +52,11 @@ if [[ "$mode" == local ]]; then
     echo "Run mirror-local from a separate local Git checkout with a regular site/ directory" >&2
     exit 2
   fi
-  rsync -av --delete "$source/" "$destination/"
-else
-  rsync -av --delete "$source/" "$destination/"
 fi
+
+rsync_args=(-av --delete)
+if [[ "$dry_run" == true ]]; then
+  rsync_args+=(--dry-run)
+  echo "Dry run: nothing will be transferred or deleted in $destination" >&2
+fi
+rsync "${rsync_args[@]}" "$source/" "$destination/"

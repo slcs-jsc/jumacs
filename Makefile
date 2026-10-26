@@ -5,7 +5,7 @@ START ?=
 END ?=
 PERIOD = $(if $(START),--start-year $(START)) $(if $(END),--end-year $(END))
 
-.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute build zonal climatology harmonize compare validate coverage trends quicklook site mirror-local mirror-web
+.PHONY: test inspect inspect-all inspect-geosccm inspect-emac inspect-waccmx download download-plan download-execute build zonal climatology harmonize compare validate coverage trends quicklook site mirror-local mirror-web mirror-web-dry-run
 
 test:
 	@PYTHONPATH="src:$(PYTHONPATH)" $(PYTHON) -m pytest -q
@@ -48,3 +48,5 @@ mirror-local:
 	@bash scripts/mirror.sh local
 mirror-web:
 	@bash scripts/mirror.sh web
+mirror-web-dry-run:
+	@bash scripts/mirror.sh web --dry-run

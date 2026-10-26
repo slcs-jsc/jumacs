@@ -147,6 +147,67 @@ def test_web_mirror_uses_complete_local_site(tmp_path):
         f"-av --delete {site}/ datapub.fz-juelich.de:/var/www/jumacs/"]
 
 
+def _web_checkout(tmp_path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/mirror.sh", checkout / "scripts/mirror.sh")
+    site = checkout / "site"
+    (site / "products/harmonized/SOCOL").mkdir(parents=True)
+    (site / "index.html").write_text("new-index-content")
+    (site / "products/harmonized/SOCOL/harmonized.nc").write_bytes(b"new")
+    return checkout, site
+
+
+def test_web_mirror_dry_run_passes_dry_run_and_delete_to_rsync(tmp_path):
+    checkout, site = _web_checkout(tmp_path)
+    env = os.environ.copy()
+    log = _fake_rsync(tmp_path, env)
+    env["JUMACS_WEB_SITE_MIRROR"] = "datapub.fz-juelich.de:/mnt/slcs/jumacs/"
+    result = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web", "--dry-run"],
+                            env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == [
+        f"-av --delete --dry-run {site}/ datapub.fz-juelich.de:/mnt/slcs/jumacs/"]
+
+
+def test_web_mirror_dry_run_cannot_mutate_destination(tmp_path):
+    checkout, _site = _web_checkout(tmp_path)
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "index.html").write_text("old")
+    (remote / "stale.png").write_text("stale")
+    env = os.environ.copy()
+    env["JUMACS_WEB_SITE_MIRROR"] = str(remote)
+    dry = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web", "--dry-run"],
+                         env=env, capture_output=True, text=True, check=False)
+    assert dry.returncode == 0, dry.stderr
+    assert "deleting stale.png" in dry.stdout
+    assert (remote / "index.html").read_text() == "old"
+    assert (remote / "stale.png").is_file()
+    assert not (remote / "products").exists()
+    real = subprocess.run(["bash", str(checkout / "scripts/mirror.sh"), "web"],
+                          env=env, capture_output=True, text=True, check=False)
+    assert real.returncode == 0, real.stderr
+    assert (remote / "index.html").read_text() == "new-index-content"
+    assert not (remote / "stale.png").exists()
+    assert (remote / "products/harmonized/SOCOL/harmonized.nc").read_bytes() == b"new"
+
+
+def test_mirror_dry_run_still_rejects_unset_destination():
+    env = os.environ.copy()
+    env.pop("JUMACS_WEB_SITE_MIRROR", None)
+    result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh"), "web", "--dry-run"],
+                            env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 2 and "unset or empty" in result.stderr
+
+
+def test_mirror_rejects_unknown_option():
+    for args in (["web", "--oops"], ["web", "--dry-run", "extra"]):
+        result = subprocess.run(["bash", str(ROOT / "scripts/mirror.sh")] + args,
+                                env=os.environ.copy(), capture_output=True, text=True, check=False)
+        assert result.returncode == 2 and "Usage" in result.stderr
+
+
 def test_download_all_does_not_leak_its_arguments_to_python_setup(tmp_path):
     checkout = tmp_path / "checkout"
     (checkout / "scripts").mkdir(parents=True)
